@@ -274,7 +274,7 @@ struct FolderExpandedView: View {
     private var folderNameView: some View {
         Group {
             if isEditingName {
-                TextField("Folder Name", text: $folderName)
+                TextField("folder_name_placeholder", text: $folderName)
                     .font(.system(size: 20, weight: .semibold))
                     .foregroundStyle(.white)
                     .textFieldStyle(.plain)
