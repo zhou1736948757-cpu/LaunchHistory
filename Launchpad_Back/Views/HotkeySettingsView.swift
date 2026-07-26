@@ -17,11 +17,11 @@ enum HotkeyType: String, CaseIterable {
 
     var displayName: String {
         switch self {
-        case .toggleWindow: return "显示/隐藏窗口"
-        case .previousPage: return "上一页"
-        case .nextPage: return "下一页"
-        case .hideWindow: return "隐藏窗口"
-        case .quitApp: return "退出应用"
+        case .toggleWindow: return String(localized: "hk_toggle_window")
+        case .previousPage: return String(localized: "hk_previous_page")
+        case .nextPage: return String(localized: "hk_next_page")
+        case .hideWindow: return String(localized: "hk_hide_window")
+        case .quitApp: return String(localized: "hk_quit_app")
         }
     }
 }
@@ -40,37 +40,37 @@ struct HotkeySettingsView: View {
 
     var body: some View {
         Form {
-            Section(header: Text("全局快捷键")) {
+            Section(header: Text("section_global_hotkeys")) {
                 HotkeyRow(
-                    title: "显示/隐藏窗口",
+                    title: "hk_toggle_window",
                     hotkey: toggleHotkey,
                     isRecording: recordingHotkey == .toggleWindow,
                     onTap: { startRecording(.toggleWindow) }
                 )
 
                 HotkeyRow(
-                    title: "上一页",
+                    title: "hk_previous_page",
                     hotkey: previousHotkey,
                     isRecording: recordingHotkey == .previousPage,
                     onTap: { startRecording(.previousPage) }
                 )
 
                 HotkeyRow(
-                    title: "下一页",
+                    title: "hk_next_page",
                     hotkey: nextHotkey,
                     isRecording: recordingHotkey == .nextPage,
                     onTap: { startRecording(.nextPage) }
                 )
 
                 HotkeyRow(
-                    title: "隐藏窗口",
+                    title: "hk_hide_window",
                     hotkey: hideHotkey,
                     isRecording: recordingHotkey == .hideWindow,
                     onTap: { startRecording(.hideWindow) }
                 )
 
                 HotkeyRow(
-                    title: "退出应用",
+                    title: "hk_quit_app",
                     hotkey: quitHotkey,
                     isRecording: recordingHotkey == .quitApp,
                     onTap: { startRecording(.quitApp) }
@@ -78,9 +78,9 @@ struct HotkeySettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .navigationTitle("快捷键")
-        .alert("快捷键设置", isPresented: $showingAlert) {
-            Button("确定", role: .cancel) { }
+        .navigationTitle("tab_hotkey")
+        .alert("hotkey_settings", isPresented: $showingAlert) {
+            Button("ok", role: .cancel) { }
         } message: {
             Text(alertMessage)
         }
@@ -183,7 +183,7 @@ struct HotkeySettingsView: View {
 
 /// 快捷键行组件
 struct HotkeyRow: View {
-    let title: String
+    let title: LocalizedStringKey
     let hotkey: String
     let isRecording: Bool
     let onTap: () -> Void
@@ -196,7 +196,7 @@ struct HotkeyRow: View {
             Spacer()
 
             Button(action: onTap) {
-                Text(isRecording ? "按下组合键..." : hotkey)
+                Text(isRecording ? LocalizedStringKey("press_combination") : LocalizedStringKey(hotkey))
                     .font(.system(.body, design: .monospaced))
                     .foregroundColor(isRecording ? .accentColor : .primary)
                     .frame(minWidth: 100)

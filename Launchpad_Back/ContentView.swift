@@ -114,12 +114,22 @@ struct LaunchpadView: View {
     var body: some View {
         GeometryReader { geometry in
             ZStack {
-                // 背景
+                // 背景（NSVisualEffectView 会吞掉鼠标事件，SwiftUI 的 onTapGesture 收不到，
+                // 因此背景本身不挂手势；空白点击交给下面的透明捕获层处理）
                 LaunchpadBackgroundView()
+
+                // 空白点击捕获层：纯 SwiftUI Color 才能可靠接收点击。
+                // 放在背景之上、VStack 之下：图标/网格在上层优先命中测试，
+                // 点击落在空白处时由本层拦截并走 handleEscapeKey()（分级处理：
+                // 编辑模式→退出编辑，文件夹→收起，有搜索→清空，否则→hideWindow）。
+                // 同时确保整个窗口内容都参与 hit-testing，避免点击穿透到后面 UI。
+                Color.clear
+                    .ignoresSafeArea()
+                    .contentShape(Rectangle())
                     .onTapGesture {
                         handleEscapeKey()
                     }
-                
+
                 VStack(spacing: 0) {
                     // 頂部間距：全屏模式下留更多空间避开灵动岛/菜单栏区域
                     Spacer().frame(height: topPadding)
@@ -320,13 +330,13 @@ struct LaunchpadView: View {
                     floatingDragOverlay(item: item, location: floatingDragState.location, in: geometry)
                 }
             }
-            .alert("重設版面？", isPresented: $showingResetConfirmation) {
-                Button("取消", role: .cancel) {}
-                Button("重設", role: .destructive) {
+            .alert("reset_layout_title", isPresented: $showingResetConfirmation) {
+                Button("cancel", role: .cancel) {}
+                Button("reset", role: .destructive) {
                     resetLayout()
                 }
             } message: {
-                Text("這會清除自訂排序與所有資料夾，並恢復成依名稱排序。")
+                Text("reset_layout_message")
             }
             .onAppear {
                 paginationVM.updateScreenSize(geometry.size)
@@ -371,7 +381,7 @@ struct LaunchpadView: View {
 
     private var editingHeaderView: some View {
         HStack {
-            Text("拖動圖標以重新排列")
+            Text("drag_to_rearrange")
                 .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(.white.opacity(0.8))
 
@@ -383,7 +393,7 @@ struct LaunchpadView: View {
 
             settingsButton
 
-            Button("完成") {
+            Button("done") {
                 editModeManager.exitEditMode()
             }
             .buttonStyle(.plain)
@@ -408,7 +418,7 @@ struct LaunchpadView: View {
                 .background(Circle().fill(.white.opacity(0.16)))
         }
         .buttonStyle(.plain)
-        .help("设置")
+        .help("settings")
     }
 
     @ViewBuilder
@@ -423,7 +433,7 @@ struct LaunchpadView: View {
                     }
                 } label: {
                     HStack {
-                        Text(mode == .horizontalPaging ? "水平分頁" : "垂直滾動")
+                        Text(mode == .horizontalPaging ? LocalizedStringKey("horizontal_paging") : LocalizedStringKey("vertical_scroll"))
                         if viewLayoutMode == mode {
                             Image(systemName: "checkmark")
                         }
@@ -431,7 +441,7 @@ struct LaunchpadView: View {
                 }
             }
         } label: {
-            Label(viewLayoutMode == .horizontalPaging ? "水平分頁" : "垂直滾動",
+            Label(viewLayoutMode == .horizontalPaging ? LocalizedStringKey("horizontal_paging") : LocalizedStringKey("vertical_scroll"),
                   systemImage: viewLayoutMode == .horizontalPaging ? "rectangle.2.group" : "arrow.down")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(.white)
@@ -446,7 +456,7 @@ struct LaunchpadView: View {
         Button {
             showingResetConfirmation = true
         } label: {
-            Label("重設版面", systemImage: "arrow.counterclockwise")
+            Label("reset_layout", systemImage: "arrow.counterclockwise")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(.white)
                 .padding(.horizontal, 14)

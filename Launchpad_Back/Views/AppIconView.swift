@@ -144,7 +144,10 @@ struct InteractiveIconModifier: ViewModifier {
     
     @State private var dragOffset: CGSize = .zero
     @State private var didTriggerLongPressDrag = false
-    
+    /// 0.2s 長按識別成功後置 true，用於抑制本次按住期間的 tap 與 editDrag，
+    /// 讓「按住 0.2s 進入編輯模式 + 同一次按住繼續拖動」由 longPressInteractionGesture 統一負責。
+    @State private var didLongPress = false
+
     func body(content: Content) -> some View {
         content
             .wiggle(config.isEditing && !config.isDragging)
@@ -152,9 +155,11 @@ struct InteractiveIconModifier: ViewModifier {
             .overlay(dropTargetOverlay)
             .offset(dragOffset)
             .contentShape(Rectangle())
-            .highPriorityGesture(editDragGesture, including: .gesture)
-            .simultaneousGesture(tapGesture)
+            // 三個手勢均以 simultaneous 共存：長按 0.2s 識別後用 didLongPress 標記
+            // 統一接管，避免 tap 誤開應用、避免與 editDrag 重複追蹤拖動。
             .simultaneousGesture(longPressInteractionGesture)
+            .simultaneousGesture(tapGesture)
+            .simultaneousGesture(editDragGesture)
     }
     
     // MARK: - 手勢
@@ -162,23 +167,35 @@ struct InteractiveIconModifier: ViewModifier {
     private var tapGesture: some Gesture {
         TapGesture()
             .onEnded {
+                // 長按已識別（進入編輯模式或拖動中）時抑制單擊，避免誤開應用；
+                // 純點擊（按下即抬起、未達 0.2s）仍會走到這裡開啟應用。
+                guard !didLongPress else { return }
                 config.onTap()
             }
     }
-    
+
+    /// 按住 0.2s 進入抖動編輯模式，並在同一按住手勢中繼續拖動改位置/生成文件夾（HyperOS 風格）。
     private var longPressInteractionGesture: some Gesture {
-        LongPressGesture(minimumDuration: 0.5)
+        LongPressGesture(minimumDuration: 0.2)
+            .onChanged { _ in
+                // 0.2s 到達：長按識別成功。標記以抑制 tap 與 editDrag，
+                // 讓本次按住由本手勢統一負責（進入編輯模式 + 後續拖動）。
+                didLongPress = true
+            }
             .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .global))
             .onChanged { value in
-                guard !config.isEditing else { return }
-                
                 switch value {
                 case .second(true, let drag?):
                     if !didTriggerLongPressDrag {
-                        Logger.info("Long press detected on \(config.name)")
-                        config.onLongPress?()
+                        // 首次拖動：若尚未處於編輯模式，觸發進入編輯模式（所有圖標開始抖動）
+                        if !config.isEditing {
+                            Logger.info("Long press detected on \(config.name)")
+                            config.onLongPress?()
+                        }
                         didTriggerLongPressDrag = true
                     }
+                    // 即便 isEditing 已因 enterEditMode() 翻轉為 true，仍持續追蹤拖動，
+                    // 實現「按住 0.2s 進入編輯模式後不鬆手即可拖動改位置/生成文件夾」。
                     dragOffset = drag.translation
                     config.onDragChanged?(drag.location)
                 default:
@@ -186,48 +203,49 @@ struct InteractiveIconModifier: ViewModifier {
                 }
             }
             .onEnded { value in
-                guard !config.isEditing else {
-                    didTriggerLongPressDrag = false
-                    return
-                }
-                
+                var didDrag = false
                 switch value {
-                case .first(true):
-                    Logger.info("Long press detected on \(config.name)")
-                    config.onLongPress?()
                 case .second(true, let drag?):
-                    if !didTriggerLongPressDrag {
-                        Logger.info("Long press detected on \(config.name)")
-                        config.onLongPress?()
-                    }
+                    didDrag = true
                     dragOffset = drag.translation
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
                         dragOffset = .zero
                     }
                     config.onDragEnded?()
                 default:
+                    // .first(true) 或 .second(true, nil)：長按識別但未發生拖動
                     break
                 }
-                
+
+                // 長按識別後若沒有拖動，且尚未進入編輯模式，則進入編輯模式
+                if !didDrag, !didTriggerLongPressDrag, !config.isEditing {
+                    Logger.info("Long press detected on \(config.name)")
+                    config.onLongPress?()
+                }
+
                 didTriggerLongPressDrag = false
+                // 延後重置 didLongPress，確保同幀釋放觸發的 tap.onEnded 仍能讀到 true 而被抑制
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    didLongPress = false
+                }
             }
     }
-    
+
+    /// 編輯模式下的快速拖動（移動超過 5pt 即觸發）。
+    /// 當 longPressInteractionGesture 已識別長按（didLongPress=true）時讓出拖動權，避免重複追蹤。
     private var editDragGesture: some Gesture {
         DragGesture(minimumDistance: config.isEditing ? 5 : 1000, coordinateSpace: .global)
             .onChanged { value in
-                if config.isEditing {
-                    dragOffset = value.translation
-                    config.onDragChanged?(value.location)
-                }
+                guard config.isEditing, !didLongPress else { return }
+                dragOffset = value.translation
+                config.onDragChanged?(value.location)
             }
             .onEnded { _ in
-                if config.isEditing {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                        dragOffset = .zero
-                    }
-                    config.onDragEnded?()
+                guard config.isEditing, !didLongPress else { return }
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                    dragOffset = .zero
                 }
+                config.onDragEnded?()
             }
     }
     
@@ -346,18 +364,18 @@ struct AppIconView: View {
     private var appContextMenu: some View {
         // 應用程式操作
         Button(action: { onShowInFinder?(app) }) {
-            Label("在 Finder 中顯示", systemImage: "folder")
+            Label("show_in_finder", systemImage: "folder")
         }
 
         Button(action: { onGetInfo?(app) }) {
-            Label("顯示簡介", systemImage: "info.circle")
+            Label("get_info", systemImage: "info.circle")
         }
 
         Divider()
 
         // 顯示/隱藏選項
         Button(action: { onToggleHide?(app) }) {
-            Label(app.isHidden ? "在 Launchpad 中顯示" : "從 Launchpad 中隱藏", systemImage: app.isHidden ? "eye" : "eye.slash")
+            Label(app.isHidden ? LocalizedStringKey("show_in_launchpad") : LocalizedStringKey("hide_from_launchpad"), systemImage: app.isHidden ? "eye" : "eye.slash")
         }
 
         Divider()
@@ -365,10 +383,10 @@ struct AppIconView: View {
         // 編輯模式相關
         if !isEditing {
             Button(action: { onLongPress?() }) {
-                Label("進入編輯模式", systemImage: "pencil.circle")
+                Label("enter_edit_mode", systemImage: "pencil.circle")
             }
         } else {
-            Label("編輯模式中", systemImage: "checkmark.circle")
+            Label("in_edit_mode", systemImage: "checkmark.circle")
                 .disabled(true)
         }
     }
@@ -455,7 +473,7 @@ struct FolderIconView: View {
     @ViewBuilder
     private var folderContextMenu: some View {
         // 文件夾信息
-        Text("包含 \(folder.apps.count) 個應用")
+        Text("folder_contains_apps \(folder.apps.count)")
             .font(.caption)
             .foregroundStyle(.secondary)
 
@@ -463,15 +481,15 @@ struct FolderIconView: View {
 
         // 文件夾操作
         Button(action: { onRenameFolder?(folder) }) {
-            Label("重新命名", systemImage: "pencil")
+            Label("rename", systemImage: "pencil")
         }
 
         if !isEditing {
             Button(action: { onDeleteFolder?(folder) }) {
-                Label("刪除文件夾", systemImage: "trash")
+                Label("delete_folder", systemImage: "trash")
             }
         } else {
-            Label("編輯模式中", systemImage: "checkmark.circle")
+            Label("in_edit_mode", systemImage: "checkmark.circle")
                 .disabled(true)
         }
 
@@ -480,7 +498,7 @@ struct FolderIconView: View {
         // 編輯模式相關
         if !isEditing {
             Button(action: { onLongPress?() }) {
-                Label("進入編輯模式", systemImage: "pencil.circle")
+                Label("enter_edit_mode", systemImage: "pencil.circle")
             }
         }
     }

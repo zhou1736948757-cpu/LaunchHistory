@@ -17,9 +17,9 @@ enum WindowMode: String, Codable, CaseIterable {
 
     var localizedName: LocalizedStringKey {
         switch self {
-        case .fullscreen: return "全屏模式"
-        case .windowed: return "窗口模式"
-        case .centered: return "居中模式"
+        case .fullscreen: return "mode_fullscreen"
+        case .windowed: return "mode_windowed"
+        case .centered: return "mode_centered"
         }
     }
 }
@@ -42,10 +42,10 @@ enum RefreshRate: String, Codable, CaseIterable {
 
     var localizedName: LocalizedStringKey {
         switch self {
-        case .low: return "30 FPS"
-        case .medium: return "60 FPS"
-        case .high: return "120 FPS"
-        case .ultra: return "144 FPS"
+        case .low: return "refresh_30_fps"
+        case .medium: return "refresh_60_fps"
+        case .high: return "refresh_120_fps"
+        case .ultra: return "refresh_144_fps"
         }
     }
 }
@@ -58,9 +58,9 @@ enum ScrollMode: String, Codable, CaseIterable {
 
     var localizedName: LocalizedStringKey {
         switch self {
-        case .smooth: return "平滑滚动"
-        case .discrete: return "分步滚动"
-        case .momentum: return "惯性滚动"
+        case .smooth: return "scroll_smooth"
+        case .discrete: return "scroll_discrete"
+        case .momentum: return "scroll_momentum"
         }
     }
 }
@@ -73,9 +73,9 @@ enum LaunchMethod: String, Codable, CaseIterable {
 
     var localizedName: LocalizedStringKey {
         switch self {
-        case .singleClick: return "单击启动"
-        case .doubleClick: return "双击启动"
-        case .enterKey: return "回车键启动"
+        case .singleClick: return "launch_single_click"
+        case .doubleClick: return "launch_double_click"
+        case .enterKey: return "launch_enter_key"
         }
     }
 }
@@ -92,13 +92,13 @@ enum GestureType: String, Codable, CaseIterable {
 
     var localizedName: LocalizedStringKey {
         switch self {
-        case .none: return "无"
-        case .swipeUp: return "上滑"
-        case .swipeDown: return "下滑"
-        case .swipeLeft: return "左滑"
-        case .swipeRight: return "右滑"
-        case .pinchIn: return "捏合缩小"
-        case .pinchOut: return "捏合放大"
+        case .none: return "gesture_none"
+        case .swipeUp: return "gesture_swipe_up"
+        case .swipeDown: return "gesture_swipe_down"
+        case .swipeLeft: return "gesture_swipe_left"
+        case .swipeRight: return "gesture_swipe_right"
+        case .pinchIn: return "gesture_pinch_in"
+        case .pinchOut: return "gesture_pinch_out"
         }
     }
 }
@@ -121,10 +121,10 @@ enum IconSize: String, Codable, CaseIterable {
 
     var localizedName: LocalizedStringKey {
         switch self {
-        case .small: return "小"
-        case .medium: return "中"
-        case .large: return "大"
-        case .extraLarge: return "特大"
+        case .small: return "size_small"
+        case .medium: return "size_medium"
+        case .large: return "size_large"
+        case .extraLarge: return "size_extra_large"
         }
     }
 }

@@ -10,13 +10,13 @@ import SwiftUI
 enum SettingsTab: CaseIterable {
     case general, appearance, gesture, hotkey, about
 
-    var title: String {
+    var title: LocalizedStringKey {
         switch self {
-        case .general:    return "通用"
-        case .appearance: return "外观"
-        case .gesture:    return "手势"
-        case .hotkey:     return "快捷键"
-        case .about:      return "关于"
+        case .general:    return "tab_general"
+        case .appearance: return "tab_appearance"
+        case .gesture:    return "tab_gesture"
+        case .hotkey:     return "tab_hotkey"
+        case .about:      return "tab_about"
         }
     }
 }
@@ -80,11 +80,12 @@ struct GeneralSettingsView: View {
     @AppStorage("windowMode")       private var windowMode:        WindowMode = .fullscreen
     @AppStorage("backgroundOpacity") private var backgroundOpacity: Double    = 0.85
     @AppStorage("blurEnabled")      private var blurEnabled:       Bool       = true
+    @AppStorage("languagePreference") private var languagePreferenceRaw: String = LanguagePreference.system.rawValue
 
     var body: some View {
         Form {
-            Section("窗口") {
-                Picker("窗口模式", selection: $windowMode) {
+            Section("section_window") {
+                Picker("window_mode", selection: $windowMode) {
                     ForEach(WindowMode.allCases, id: \.self) { mode in
                         Text(mode.localizedName).tag(mode)
                     }
@@ -93,19 +94,19 @@ struct GeneralSettingsView: View {
                     NotificationCenter.default.post(name: .windowModeChanged, object: nil)
                 }
 
-                Toggle("启用模糊效果", isOn: $blurEnabled)
+                Toggle("blur_enabled", isOn: $blurEnabled)
 
                 Slider(value: $backgroundOpacity, in: 0.0...1.0) {
-                    Text("背景不透明度")
+                    Text("background_opacity")
                 } minimumValueLabel: {
-                    Text("透明").font(.caption)
+                    Text("transparent").font(.caption)
                 } maximumValueLabel: {
-                    Text("不透明").font(.caption)
+                    Text("opaque").font(.caption)
                 }
             }
 
-            Section("刷新率") {
-                Picker("刷新率", selection: binding(\.refreshRate)) {
+            Section("section_refresh_rate") {
+                Picker("refresh_rate", selection: binding(\.refreshRate)) {
                     ForEach(RefreshRate.allCases, id: \.self) { rate in
                         Text(rate.localizedName).tag(rate)
                     }
@@ -116,10 +117,33 @@ struct GeneralSettingsView: View {
                 }
             }
 
-            Section("高级") {
-                Toggle("开机自动启动", isOn: binding(\.autoLaunchAtLogin))
-                Toggle("检查更新",     isOn: binding(\.checkForUpdates))
-                Toggle("调试模式",     isOn: binding(\.debugModeEnabled))
+            Section("section_advanced") {
+                Toggle("auto_launch_at_login", isOn: binding(\.autoLaunchAtLogin))
+                Toggle("check_for_updates",     isOn: binding(\.checkForUpdates))
+                Toggle("debug_mode",     isOn: binding(\.debugModeEnabled))
+            }
+
+            Section("section_language") {
+                Picker("language", selection: $languagePreferenceRaw) {
+                    ForEach(LanguagePreference.allCases, id: \.self.rawValue) { lang in
+                        Text(lang.displayName).tag(lang.rawValue)
+                    }
+                }
+                .onChange(of: languagePreferenceRaw) { _, newValue in
+                    let pref = LanguagePreference(rawValue: newValue) ?? .system
+                    LocalizationManager.shared.applyPreference(pref)
+                }
+
+                // 选手动语言时显示重启提示；选“跟随系统”时不显示
+                if LocalizationManager.shared.needsRestart {
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                            .foregroundStyle(.orange)
+                        Text("restart_required")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
         }
         .formStyle(.grouped)
@@ -137,42 +161,42 @@ struct AppearanceSettingsView: View {
     @AppStorage("iconSize")           private var iconSize:           Double = 80
     @AppStorage("gridColumns")        private var gridColumns:        Int    = 7
     @AppStorage("showIconLabels")     private var showIconLabels:     Bool   = true
-    @AppStorage("searchBarSizeRatio") private var searchBarSizeRatio: Double = 0.6
+    @AppStorage("searchBarSlider")    private var searchBarSlider:    Double = 0.5
 
     var body: some View {
         Form {
-            Section("图标") {
+            Section("section_icon") {
                 Slider(value: $iconSize, in: 48...110, step: 2) {
-                    Text("图标大小")
+                    Text("icon_size")
                 } minimumValueLabel: {
-                    Text("小").font(.caption)
+                    Text("size_small").font(.caption)
                 } maximumValueLabel: {
-                    Text("大").font(.caption)
+                    Text("size_large").font(.caption)
                 }
                 .onChange(of: iconSize) { _, _ in postLayoutChanged() }
 
-                Text("当前：\(Int(iconSize)) pt")
+                Text("current_value_pt \(Int(iconSize))")
                     .font(.caption).foregroundStyle(.secondary)
 
-                Toggle("显示图标名称", isOn: $showIconLabels)
+                Toggle("show_icon_labels", isOn: $showIconLabels)
                     .onChange(of: showIconLabels) { _, _ in postLayoutChanged() }
 
                 Stepper(value: $gridColumns, in: 4...9) {
-                    Text("每行图标数：\(gridColumns)")
+                    Text("icons_per_row \(gridColumns)")
                 }
                 .onChange(of: gridColumns) { _, _ in postLayoutChanged() }
             }
 
-            Section("搜索栏") {
-                Slider(value: $searchBarSizeRatio, in: 0.4...1.0, step: 0.05) {
-                    Text("搜索栏大小")
+            Section("section_search_bar") {
+                Slider(value: $searchBarSlider, in: 0.0...1.0, step: 0.05) {
+                    Text("search_bar_size")
                 } minimumValueLabel: {
-                    Text("小").font(.caption)
+                    Text("size_small").font(.caption)
                 } maximumValueLabel: {
-                    Text("大").font(.caption)
+                    Text("size_large").font(.caption)
                 }
 
-                Text("当前大小：\(Int(searchBarSizeRatio * 100))%")
+                Text("current_size_percent \(Int(searchBarSlider * 100))")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
@@ -193,22 +217,22 @@ struct GestureSettingsView: View {
     var body: some View {
         Form {
             // 辅助功能权限状态
-            Section("辅助功能权限") {
+            Section("section_accessibility") {
                 HStack {
                     Image(systemName: hasAccessibility ? "checkmark.shield.fill" : "exclamationmark.shield.fill")
                         .foregroundStyle(hasAccessibility ? .green : .orange)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(hasAccessibility ? "权限已授予" : "需要辅助功能权限")
+                        Text(hasAccessibility ? LocalizedStringKey("permission_granted") : LocalizedStringKey("accessibility_permission_required"))
                             .font(.body)
                         Text(hasAccessibility
-                             ? "手势唤醒功能已可用"
-                             : "手势唤醒（面板隐藏时）需要此权限")
+                             ? LocalizedStringKey("gesture_available")
+                             : LocalizedStringKey("gesture_needs_permission"))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
                     if !hasAccessibility {
-                        Button("前往授权") {
+                        Button("go_to_authorize") {
                             openAccessibilitySettings()
                             // 延迟刷新状态
                             DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
@@ -223,29 +247,29 @@ struct GestureSettingsView: View {
             }
 
             // 手势开关
-            Section("手势开关") {
-                Toggle("启用手势唤醒", isOn: binding(\.gesturesEnabled))
+            Section("section_gesture_switch") {
+                Toggle("enable_gesture_wake", isOn: binding(\.gesturesEnabled))
                     .onChange(of: pm.preferences.gesturesEnabled) { _, _ in
                         NotificationCenter.default.post(name: .gesturesChanged, object: nil)
                     }
             }
 
             // 固定手势操作说明
-            Section("手势操作") {
-                LabeledContent("打开面板") {
-                    Label("四指捏拢", systemImage: "hand.draw.fill")
+            Section("section_gesture_actions") {
+                LabeledContent("open_panel") {
+                    Label("four_finger_pinch", systemImage: "hand.draw.fill")
                         .foregroundStyle(.secondary)
                 }
-                LabeledContent("关闭面板") {
+                LabeledContent("close_panel") {
                     HStack(spacing: 4) {
-                        Label("四指张开", systemImage: "arrow.up.left.and.arrow.down.right")
+                        Label("four_finger_spread", systemImage: "arrow.up.left.and.arrow.down.right")
                         Text("/")
                             .foregroundStyle(.tertiary)
-                        Label("点击空白", systemImage: "cursorarrow.click")
+                        Label("tap_blank", systemImage: "cursorarrow.click")
                     }
                     .foregroundStyle(.secondary)
                 }
-                LabeledContent("快捷键") {
+                LabeledContent("hotkey") {
                     Text("⌘ + L")
                         .foregroundStyle(.secondary)
                         .font(.system(.body, design: .monospaced))
@@ -273,18 +297,18 @@ struct AboutView: View {
 
     var body: some View {
         Form {
-            Section("应用信息") {
-                LabeledContent("名称",    value: "Launch_historyreview")
-                LabeledContent("版本",    value: "0.4")
-                LabeledContent("授权协议", value: "GPL-3.0")
+            Section("section_app_info") {
+                LabeledContent("name",    value: "Launch_historyreview")
+                LabeledContent("version",    value: "0.4")
+                LabeledContent("license", value: "GPL-3.0")
                 // 项目地址暂留空，待上传 GitHub 后填写
             }
 
-            Section("设置管理") {
-                Button("恢复默认设置", role: .destructive) {
+            Section("section_settings_management") {
+                Button("restore_defaults", role: .destructive) {
                     pm.resetToDefaults()
                 }
-                Button("清除所有设置") {
+                Button("clear_all_settings") {
                     pm.clearAllSettings()
                 }
             }

@@ -128,7 +128,7 @@ struct FolderExpandedView: View {
             Divider().background(.white.opacity(0.2))
             
             if isEditingMode {
-                Text("拖動圖標到外面可移出文件夾")
+                Text("drag_out_to_remove")
                     .font(.system(size: 12))
                     .foregroundStyle(.white.opacity(0.6))
             }
@@ -154,7 +154,7 @@ struct FolderExpandedView: View {
             folderNameView
             Spacer()
             if isEditingMode {
-                Button("完成") {
+                Button("done") {
                     isEditingMode = false
                 }
                 .buttonStyle(.plain)
