@@ -414,14 +414,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             window.titleVisibility = .hidden
             window.titlebarAppearsTransparent = true
             window.isMovable = false
-            // 关键：显式标记窗口为不透明，并设置不透明背景色。
-            // borderless 窗口在 macOS 上若 isOpaque=false / 背景透明，
-            // 透明区域的点击会穿透到后面 UI（能点 Dock、能关后面窗口）。
-            // 设为不透明后整个窗口 frame 都参与 hit-testing，点击被窗口拦截。
-            // 实际可见背景由 ContentView 内的 NSVisualEffectView + 渐变层提供，
-            // 这里只是兜底的不透明色（视觉上被模糊背景完全覆盖）。
-            window.isOpaque = true
-            window.backgroundColor = NSColor.black
+            // 窗口保持透明（isOpaque 默认 false）：NSVisualEffectView 的 .behindWindow
+            // 模糊 + 背景不透明度设置才能正常生效，且 borderless 窗口才能成为 key window
+            // （isOpaque=true 会导致 borderless 窗口无法成为 key，影响键盘/搜索）。
+            // 点击穿透问题由 ContentView 的 Color.clear 捕获层兜底处理空白点击；
+            // 非 tap 事件穿透若仍有问题，后续可加透明 NSView 拦截层。
             if let screen = NSScreen.main {
                 window.setFrame(screen.frame, display: true)
             }
