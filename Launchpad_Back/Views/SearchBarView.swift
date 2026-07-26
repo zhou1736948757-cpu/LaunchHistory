@@ -1,0 +1,66 @@
+//
+//  SearchBarView.swift
+//  Launchpad_Back
+//
+//  Created by Eric Yang on 2025/1/14.
+//
+
+import SwiftUI
+
+/// 搜尋欄 UI 組件（類似原版 Launchpad）
+struct SearchBarView: View {
+    @Binding var text: String
+    @FocusState private var isFocused: Bool
+    @AppStorage("searchBarSizeRatio") var sizeRatio: Double = 0.6
+    
+    var body: some View {
+        HStack(spacing: 10 * sizeRatio) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 14 * sizeRatio, weight: .medium))
+                .foregroundStyle(.white.opacity(0.6))
+
+            TextField("搜尋", text: $text)
+                .textFieldStyle(.plain)
+                .font(.system(size: 15 * sizeRatio))
+                .foregroundStyle(.white)
+                .focused($isFocused)
+                .tint(.white)
+
+            if !text.isEmpty {
+                Button(action: {
+                    withAnimation(.easeOut(duration: 0.15)) {
+                        text = ""
+                    }
+                }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 14 * sizeRatio))
+                        .foregroundStyle(.white.opacity(0.5))
+                }
+                .buttonStyle(.plain)
+                .transition(.scale.combined(with: .opacity))
+            }
+        }
+        .padding(.horizontal, 14 * sizeRatio)
+        .padding(.vertical, 8 * sizeRatio)
+        .frame(width: 240 * sizeRatio)
+        .background(
+            RoundedRectangle(cornerRadius: 10 * sizeRatio)
+                .fill(.white.opacity(0.15))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10 * sizeRatio)
+                        .stroke(.white.opacity(0.2), lineWidth: 0.5)
+                )
+        )
+    }
+}
+
+#if DEBUG
+struct SearchBarView_Previews: PreviewProvider {
+    static var previews: some View {
+        ZStack {
+            Color.black
+            SearchBarView(text: .constant(""))
+        }
+    }
+}
+#endif
