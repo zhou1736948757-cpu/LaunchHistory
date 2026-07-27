@@ -37,6 +37,11 @@ final class LaunchpadViewModel: ObservableObject {
         set { hiddenAppsStorage = newValue }
     }
 
+    /// 全部已掃描應用（含隱藏），保留原始資料供隱藏管理頁與重命名反查使用。
+    @Published private(set) var allApps: [AppItem] = []
+
+    /// 目前可見（未隱藏）的應用。等價於 `allApps.filter { !isAppHidden($0) }`。
+    /// 保留此屬性以相容既有呼叫端（`viewModel.apps`）。
     @Published var apps: [AppItem] = []
     @Published var folders: [AppFolder] = []
     @Published var displayItems: [LaunchpadDisplayItem] = [] {
@@ -52,6 +57,8 @@ final class LaunchpadViewModel: ObservableObject {
     private let scannerService: AppScannerService
     private let launcherService: AppLauncherService
     private let defaults: UserDefaults
+    private let customNameStore: CustomNameStore
+    private let customAppSourceStore: CustomAppSourceStore
     private var searchIndex: [SearchIndexEntry] = []
     private var appsByStableIdentifier: [String: AppItem] = [:]
     private var appsByBundleIdentifier: [String: AppItem] = [:]
@@ -74,11 +81,15 @@ final class LaunchpadViewModel: ObservableObject {
     init(
         scannerService: AppScannerService = AppScannerService(),
         launcherService: AppLauncherService = AppLauncherService(),
-        defaults: UserDefaults = .standard
+        defaults: UserDefaults = .standard,
+        customNameStore: CustomNameStore = .shared,
+        customAppSourceStore: CustomAppSourceStore = .shared
     ) {
         self.scannerService = scannerService
         self.launcherService = launcherService
         self.defaults = defaults
+        self.customNameStore = customNameStore
+        self.customAppSourceStore = customAppSourceStore
         Logger.info("LaunchpadViewModel initialized with memory optimizations")
     }
     
@@ -99,11 +110,21 @@ final class LaunchpadViewModel: ObservableObject {
 
         DispatchQueue.global(qos: .background).async { [weak self] in
             guard let self else { return }
-            let allApps = self.scannerService.scanInstalledApps()
+            // 合併使用者自訂來源路徑
+            let customPaths = self.customAppSourceStore.loadAll()
+            let scannedApps = self.scannerService.scanInstalledApps(customAppPaths: customPaths)
+            // 套用持久化的自訂名稱（stableIdentifier -> customName）
+            let customNames = self.customNameStore.loadAll()
+            let allApps = scannedApps.map { app -> AppItem in
+                var copy = app
+                copy.customName = customNames[app.stableIdentifier]
+                return copy
+            }
             let apps = allApps.filter { !self.isAppHidden($0) }
             let searchState = self.buildSearchState(from: apps)
 
             DispatchQueue.main.async {
+                self.allApps = allApps
                 self.apps = apps
                 self.searchableApps = searchState.apps
                 self.appsByStableIdentifier = searchState.appsByStableIdentifier
@@ -112,7 +133,7 @@ final class LaunchpadViewModel: ObservableObject {
                 self.invalidateSearchCaches()
                 self.initializeDisplayItems()
                 self.isLoading = false
-                Logger.info("App loading completed. Found \(apps.count) applications")
+                Logger.info("App loading completed. Found \(apps.count) applications (total incl. hidden: \(allApps.count))")
             }
         }
     }
@@ -379,9 +400,10 @@ final class LaunchpadViewModel: ObservableObject {
             .compactMapValues(\.first)
 
         let index = searchableApps.map { app in
+            // 搜尋索引同時包含原始名稱與展示名稱，讓使用者兩者皆可搜尋
             SearchIndexEntry(
                 stableIdentifier: app.stableIdentifier,
-                searchText: "\(app.name)\n\(app.bundleID)\n\(app.path)".lowercased()
+                searchText: "\(app.originalName)\n\(app.displayName)\n\(app.bundleID)\n\(app.path)".lowercased()
             )
         }
 
@@ -478,14 +500,18 @@ final class LaunchpadViewModel: ObservableObject {
 
     /// 切换应用的显示/隐藏状态
     /// - Parameter app: 要切换的应用
+    /// - Note: 隐藏的应用保留在 `allApps` 中，仅从 `apps`/`displayItems` 过滤。
     func toggleAppVisibility(_ app: AppItem) {
         if isAppHidden(app) {
             hiddenApps.removeAll { $0 == app.stableIdentifier }
-            Logger.info("App '\(app.name)' is now visible")
+            Logger.info("App '\(app.displayName)' is now visible")
         } else {
             hiddenApps.append(app.stableIdentifier)
-            Logger.info("App '\(app.name)' is now hidden")
+            Logger.info("App '\(app.displayName)' is now hidden")
         }
+        // 同步 visible apps 與顯示列表
+        apps = allApps.filter { !isAppHidden($0) }
+        reconcileDisplayItems()
     }
 
     /// 检查应用是否被隐藏
@@ -493,6 +519,163 @@ final class LaunchpadViewModel: ObservableObject {
     /// - Returns: 如果应用被隐藏返回 true，否则返回 false
     func isAppHidden(_ app: AppItem) -> Bool {
         hiddenApps.contains(app.stableIdentifier)
+    }
+
+    /// 供設定頁顯示的隱藏應用條目（含反查到的名字與路徑）。
+    /// 反查優先序：allApps -> 僅以 stableIdentifier 為名。
+    var hiddenAppEntries: [HiddenAppEntry] {
+        let lookup = Dictionary(uniqueKeysWithValues: allApps.map { ($0.stableIdentifier, $0) })
+        return hiddenApps.map { identifier in
+            if let app = lookup[identifier] {
+                return HiddenAppEntry(
+                    id: identifier,
+                    name: app.displayName,
+                    path: app.path
+                )
+            }
+            // 應用可能已被卸載或路徑消失，仍列出 stableIdentifier 供使用者辨識
+            return HiddenAppEntry(id: identifier, name: identifier, path: nil)
+        }
+    }
+
+    // MARK: - 自訂名稱功能
+
+    /// 取得指定應用的展示名稱（自訂名稱優先，否則原始名稱）。
+    func displayName(for app: AppItem) -> String {
+        app.displayName
+    }
+
+    /// 重命名應用。傳入 `nil` 或空白字串即恢復原始名稱。
+    /// 會持久化到 UserDefaults 並同步更新 `allApps`/`apps`/`displayItems` 中對應項目的 `customName`。
+    func renameApp(_ app: AppItem, to newName: String?) {
+        let trimmed = newName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let effective: String? = trimmed.isEmpty ? nil : trimmed
+
+        // 1. 持久化
+        customNameStore.setCustomName(effective, for: app.stableIdentifier)
+
+        // 2. 同步 in-memory AppItem 並刷新顯示
+        applyCustomName(effective, toStableIdentifier: app.stableIdentifier)
+        Logger.info("Renamed app '\(app.originalName)' -> '\(effective ?? app.originalName)'")
+    }
+
+    /// 把新的 customName 套用到 allApps/apps/folders/displayItems 中對應的 AppItem，
+    /// 並重建搜尋索引與顯示列表。
+    private func applyCustomName(_ customName: String?, toStableIdentifier identifier: String) {
+        allApps = allApps.map { app in
+            guard app.stableIdentifier == identifier else { return app }
+            var copy = app
+            copy.customName = customName
+            return copy
+        }
+        apps = allApps.filter { !isAppHidden($0) }
+
+        // 同步 folders 中的 app
+        folders = folders.map { folder in
+            var updated = folder
+            updated.apps = updated.apps.map { app in
+                guard app.stableIdentifier == identifier else { return app }
+                var copy = app
+                copy.customName = customName
+                return copy
+            }
+            return updated
+        }
+
+        // 重建搜尋狀態與顯示列表
+        let searchState = buildSearchState(from: apps)
+        searchableApps = searchState.apps
+        appsByStableIdentifier = searchState.appsByStableIdentifier
+        appsByBundleIdentifier = searchState.appsByBundleIdentifier
+        searchIndex = searchState.index
+        invalidateSearchCaches()
+        reconcileDisplayItems()
+    }
+
+    // MARK: - 自訂 App 來源
+
+    /// 目前已加入的自訂 App 來源路徑。
+    var customAppPaths: [URL] {
+        customAppSourceStore.loadAll()
+    }
+
+    /// 新增一個自訂 App 來源路徑並重新掃描合併。
+    func addCustomAppPath(_ url: URL) {
+        guard customAppSourceStore.add(url) else { return }
+        Logger.info("Added custom app source: \(url.path)")
+        rescanKeepingDisplayOrder()
+    }
+
+    /// 移除一個自訂 App 來源路徑並重新掃描合併。
+    func removeCustomAppPath(_ url: URL) {
+        guard customAppSourceStore.remove(url) else { return }
+        Logger.info("Removed custom app source: \(url.path)")
+        rescanKeepingDisplayOrder()
+    }
+
+    /// 重新掃描並套用自訂名稱，保留既有的自訂排序與文件夾。
+    private func rescanKeepingDisplayOrder() {
+        isLoading = true
+        DispatchQueue.global(qos: .background).async { [weak self] in
+            guard let self else { return }
+            let customPaths = self.customAppSourceStore.loadAll()
+            let scannedApps = self.scannerService.scanInstalledApps(customAppPaths: customPaths)
+            let customNames = self.customNameStore.loadAll()
+            let allApps = scannedApps.map { app -> AppItem in
+                var copy = app
+                copy.customName = customNames[app.stableIdentifier]
+                return copy
+            }
+            let apps = allApps.filter { !self.isAppHidden($0) }
+            let searchState = self.buildSearchState(from: apps)
+
+            DispatchQueue.main.async {
+                self.allApps = allApps
+                self.apps = apps
+                self.searchableApps = searchState.apps
+                self.appsByStableIdentifier = searchState.appsByStableIdentifier
+                self.appsByBundleIdentifier = searchState.appsByBundleIdentifier
+                self.searchIndex = searchState.index
+                self.invalidateSearchCaches()
+                self.reconcileDisplayItems()
+                self.isLoading = false
+            }
+        }
+    }
+
+    // MARK: - 卸載後資料清理
+
+    /// 應用卸載成功後呼叫：從 allApps/apps/displayItems/folders 移除，
+    /// 並清除對應的自訂名稱與隱藏紀錄。
+    func removeAppFromLaunchpad(_ app: AppItem) {
+        let identifier = app.stableIdentifier
+
+        // 清除自訂名稱
+        customNameStore.removeCustomName(for: identifier)
+        // 清除隱藏紀錄
+        hiddenApps.removeAll { $0 == identifier }
+
+        // 從 allApps / apps 移除
+        allApps.removeAll { $0.stableIdentifier == identifier }
+        apps.removeAll { $0.stableIdentifier == identifier }
+
+        // 從 folders 移除（含空文件夾清理）
+        folders = folders.compactMap { folder -> AppFolder? in
+            var updated = folder
+            updated.apps.removeAll { $0.stableIdentifier == identifier }
+            return updated.apps.isEmpty ? nil : updated
+        }
+
+        // 重建搜尋狀態與顯示列表
+        let searchState = buildSearchState(from: apps)
+        searchableApps = searchState.apps
+        appsByStableIdentifier = searchState.appsByStableIdentifier
+        appsByBundleIdentifier = searchState.appsByBundleIdentifier
+        searchIndex = searchState.index
+        invalidateSearchCaches()
+        reconcileDisplayItems()
+
+        Logger.info("Removed app '\(app.displayName)' from launchpad data after uninstall")
     }
 
     // MARK: - 排序和文件夾管理
@@ -737,4 +920,14 @@ final class LaunchpadViewModel: ObservableObject {
     func indexOfItem(withId id: UUID) -> Int? {
         displayItems.firstIndex { $0.id == id }
     }
+}
+
+/// 供設定頁顯示的隱藏應用條目。
+struct HiddenAppEntry: Identifiable, Hashable {
+    /// stableIdentifier（bundleID 優先，否則 path）
+    let id: String
+    /// 展示名稱（自訂名稱優先，否則原始名稱；找不到時退回 id）
+    let name: String
+    /// 安裝路徑，若應用已被移除則為 `nil`
+    let path: String?
 }

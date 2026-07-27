@@ -67,11 +67,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var settingsWindow: NSWindow?
     private var swipeGestureRecognizer: SwipeGestureRecognizer?
     private var multitouchStarted = false
+    private let hotCornerMonitor = HotCornerMonitor()
+    /// 三指拖动协调器：仅面板显示时启用。
+    private let threeFingerDragCoordinator = ThreeFingerDragCoordinator()
     func applicationDidFinishLaunching(_ notification: Notification) {
         Logger.info("Application did finish launching")
         createMainWindowIfNeeded()
         registerGlobalHotKey()
         setupGestureRecognizers()
+        setupHotCornerMonitor()
         showMainWindow()
         requestAccessibilityPermissionIfNeeded()
 
@@ -79,6 +83,42 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NotificationCenter.default.addObserver(self, selector: #selector(reconfigureMainWindow),   name: .windowModeChanged,      object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(rebuildGestureRecognizers), name: .gesturesChanged,       object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(handleMainWindowActivated), name: .mainWindowDidActivate,  object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(updateHotCornerEnabledCorners), name: .hotCornerSettingsChanged, object: nil)
+    }
+
+    /// 初始化热区（触发角）监控：从 UserDefaults 读取启用的角落，挂上触发回调并启动。
+    private func setupHotCornerMonitor() {
+        hotCornerMonitor.enabledCorners = currentEnabledHotCorners()
+        hotCornerMonitor.onTrigger = { [weak self] _ in
+            // 触发角命中即显示主窗口（不论当前是否已可见，showMainWindow 幂等安全）
+            Logger.info("Hot corner triggered - showing window")
+            self?.showMainWindow()
+        }
+        hotCornerMonitor.start()
+    }
+
+    /// 当前在 UserDefaults 中启用的触发角集合。
+    private func currentEnabledHotCorners() -> Set<HotCorner> {
+        let defaults = UserDefaults.standard
+        var enabled: Set<HotCorner> = []
+        if defaults.bool(forKey: "hotCornerTopLeft")     { enabled.insert(.topLeft) }
+        if defaults.bool(forKey: "hotCornerTopRight")    { enabled.insert(.topRight) }
+        if defaults.bool(forKey: "hotCornerBottomLeft")  { enabled.insert(.bottomLeft) }
+        if defaults.bool(forKey: "hotCornerBottomRight") { enabled.insert(.bottomRight) }
+        return enabled
+    }
+
+    /// 设置面板改动触发角时，更新 monitor 的 enabledCorners。
+    /// notification.object 为新的 Set<HotCorner>。
+    @objc func updateHotCornerEnabledCorners(_ notification: Notification) {
+        let corners: Set<HotCorner>
+        if let provided = notification.object as? Set<HotCorner> {
+            corners = provided
+        } else {
+            corners = currentEnabledHotCorners()
+        }
+        hotCornerMonitor.enabledCorners = corners
+        Logger.info("Hot corner enabled corners updated: \(corners.map { $0.rawValue }.sorted().joined(separator: ","))")
     }
 
     /// 检查并请求辅助功能权限（手势全局监听需要）
@@ -101,6 +141,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             setupSwipeGesture(for: window)
         }
         setupMultitouchPinch()
+        // 重建后若面板仍可见，重新启用三指拖动协调器：
+        // cleanupGestureRecognizers -> uninstall 会把 enabled 置 false，
+        // setupMultitouchPinch -> install 只重设回调，不复位 enabled。
+        // 若不在此补 enabled=true，面板保持显示时三指拖动会失效直到下次显示/隐藏。
+        if let window = mainWindow, window.isVisible {
+            threeFingerDragCoordinator.window = window
+            threeFingerDragCoordinator.setEnabled(true)
+        }
         Logger.info("Gesture recognizers rebuilt")
     }
 
@@ -149,6 +197,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         Logger.info("Application will terminate")
         unregisterGlobalHotKey()
         cleanupGestureRecognizers()
+        hotCornerMonitor.stop()
     }
     
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -202,6 +251,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // 主窗口关闭
         if window === mainWindow {
             mainWindow = nil
+            // 三指拖动：窗口已销毁，清除引用并禁用，避免坐标转换命中已释放窗口
+            threeFingerDragCoordinator.setEnabled(false)
+            threeFingerDragCoordinator.window = nil
             Logger.info("Main window closed")
         }
     }
@@ -223,6 +275,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             Logger.warning("No main window found")
             return
         }
+
+        // 三指拖动：面板隐藏前先禁用，避免拖动进行中面板被隐藏导致状态悬挂
+        threeFingerDragCoordinator.setEnabled(false)
 
         // 隐藏前先降回 .normal 级别，确保系统合成层彻底释放，
         // 避免与 Traffic Lights Plus 等插件冲突（全屏透明蒙层残留问题）
@@ -258,6 +313,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         configureMainWindow(window)
         ensureWindowIsOnScreen(window)
+
+        // 三指拖动：面板显示时绑定窗口并启用。
+        // 必须在 configureMainWindow 之后（窗口 frame/层级已定，坐标转换才准确）。
+        threeFingerDragCoordinator.window = window
+        threeFingerDragCoordinator.setEnabled(true)
         
         if window.isMiniaturized {
             window.deminiaturize(nil)
@@ -546,6 +606,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         MultitouchGestureRecognizer.shared.setCallback { [weak self] direction in
             self?.handleMultitouchPinch(direction: direction)
         }
+        // 三指拖动：把回调接到 coordinator，坐标转换后通过通知派发给 ContentView。
+        // 注意：coordinator.window 与 enabled 仅在面板显示时设置，
+        // 面板隐藏时三指事件被丢弃，不影响四指捏合。
+        threeFingerDragCoordinator.install()
         MultitouchGestureRecognizer.shared.start()
         multitouchStarted = true
     }
@@ -563,6 +627,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         swipeGestureRecognizer?.stop()
         swipeGestureRecognizer = nil
         if multitouchStarted {
+            // 三指拖动：先禁用并卸载回调，再停掉底层设备
+            threeFingerDragCoordinator.setEnabled(false)
+            threeFingerDragCoordinator.uninstall()
             MultitouchGestureRecognizer.shared.stop()
             multitouchStarted = false
         }

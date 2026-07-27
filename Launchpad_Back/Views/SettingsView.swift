@@ -4,6 +4,15 @@
 //
 
 import SwiftUI
+import AppKit
+import UniformTypeIdentifiers
+
+// MARK: - 通知扩展（热区设置变化）
+
+extension Notification.Name {
+    /// 热区启用角落集合变化时派发，object 为 Set<HotCorner>
+    static let hotCornerSettingsChanged = Notification.Name("hotCornerSettingsChanged")
+}
 
 // MARK: - 标签枚举
 
@@ -77,6 +86,7 @@ struct SettingsView: View {
 
 struct GeneralSettingsView: View {
     @ObservedObject private var pm = UserPreferencesManager.shared
+    @StateObject private var launchpadVM = LaunchpadViewModel()
     @AppStorage("windowMode")       private var windowMode:        WindowMode = .fullscreen
     @AppStorage("backgroundOpacity") private var backgroundOpacity: Double    = 0.85
     @AppStorage("blurEnabled")      private var blurEnabled:       Bool       = true
@@ -143,15 +153,164 @@ struct GeneralSettingsView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
+
+                    Button("quit_and_reopen") {
+                        quitAndReopen()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .help("quit_and_reopen_help")
                 }
+            }
+
+            // 自訂 App 來源
+            Section("section_app_sources") {
+                Button("add_app_source") {
+                    showAddAppSourcePanel()
+                }
+                customAppSourcesList
+            }
+
+            // 已隱藏應用
+            Section("section_hidden_apps") {
+                hiddenAppsList
             }
         }
         .formStyle(.grouped)
+        .onAppear {
+            launchpadVM.loadInstalledApps()
+        }
+    }
+
+    /// 自訂 App 來源列表。空時顯示提示。
+    @ViewBuilder
+    private var customAppSourcesList: some View {
+        let paths = launchpadVM.customAppPaths
+        if paths.isEmpty {
+            Text("no_custom_app_sources")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } else {
+            ForEach(Array(paths.enumerated()), id: \.element) { _, url in
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(url.lastPathComponent)
+                            .font(.body)
+                        Text(url.path)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    Spacer()
+                    Button(role: .destructive) {
+                        launchpadVM.removeCustomAppPath(url)
+                    } label: {
+                        Text("remove")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            }
+        }
+    }
+
+    /// 已隱藏應用列表。空時顯示提示。
+    @ViewBuilder
+    private var hiddenAppsList: some View {
+        let entries = launchpadVM.hiddenAppEntries
+        if entries.isEmpty {
+            Text("no_hidden_apps")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } else {
+            ForEach(entries) { entry in
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(entry.name)
+                            .font(.body)
+                        if let path = entry.path {
+                            Text(path)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+                    }
+                    Spacer()
+                    Button("show_app") {
+                        showHiddenApp(entry)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            }
+        }
     }
 
     private func binding<T>(_ kp: WritableKeyPath<UserPreferences, T>) -> Binding<T> {
         Binding(get: { pm.preferences[keyPath: kp] },
                 set: { pm.update(keyPath: kp, value: $0) })
+    }
+
+    /// 弹出 NSOpenPanel 让用户选择一个 .app 加入自定义来源。
+    /// 重复不添加（addCustomAppPath 内部已去重）。
+    private func showAddAppSourcePanel() {
+        let panel = NSOpenPanel()
+        panel.title = NSLocalizedString("add_app_source", comment: "")
+        panel.allowedContentTypes = [.application]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.canCreateDirectories = false
+        panel.treatsFilePackagesAsDirectories = false
+
+        let response = panel.runModal()
+        guard response == .OK, let url = panel.url else { return }
+
+        // 只接受 .app 后缀
+        guard url.pathExtension == "app" else {
+            Logger.warning("Selected URL is not an .app: \(url.path)")
+            return
+        }
+
+        launchpadVM.addCustomAppPath(url)
+    }
+
+    /// 恢复被隐藏的应用。
+    /// 通过 stableIdentifier 在 allApps 中反查 AppItem 后调用 toggleAppVisibility。
+    private func showHiddenApp(_ entry: HiddenAppEntry) {
+        guard let app = launchpadVM.allApps.first(where: { $0.stableIdentifier == entry.id }) else {
+            Logger.warning("Cannot restore hidden app: no matching AppItem for \(entry.id)")
+            return
+        }
+        launchpadVM.toggleAppVisibility(app)
+    }
+
+    /// 退出并重新打开应用（语言切换后需要新实例才能生效）。
+    /// 待验收：若 /usr/bin/open -n 无法稳定启动新实例，可改为通过 launchd/registration
+    /// 或独立 launcher helper 实现。第一版先按此实现。
+    private func quitAndReopen() {
+        guard let appURL = NSRunningApplication.current.bundleURL else {
+            Logger.error("Cannot resolve current app bundle URL to restart")
+            return
+        }
+
+        Logger.info("Quit-and-reopen requested; relaunching \(appURL.path)")
+        let task = Process()
+        task.launchPath = "/usr/bin/open"
+        task.arguments = ["-n", appURL.path]
+        do {
+            try task.run()
+        } catch {
+            Logger.error("Failed to relaunch app: \(error.localizedDescription)")
+            return
+        }
+
+        // 留一点时间让 open 进程把新实例拉起，再终止当前实例
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            NSApp.terminate(nil)
+        }
     }
 }
 
@@ -162,6 +321,7 @@ struct AppearanceSettingsView: View {
     @AppStorage("gridColumns")        private var gridColumns:        Int    = 7
     @AppStorage("showIconLabels")     private var showIconLabels:     Bool   = true
     @AppStorage("searchBarSlider")    private var searchBarSlider:    Double = 0.5
+    @AppStorage("viewLayoutMode")     private var viewLayoutMode:      ViewLayoutMode = .horizontalPaging
 
     var body: some View {
         Form {
@@ -187,6 +347,19 @@ struct AppearanceSettingsView: View {
                 .onChange(of: gridColumns) { _, _ in postLayoutChanged() }
             }
 
+            Section("section_layout") {
+                Picker("layout_mode", selection: $viewLayoutMode) {
+                    ForEach(ViewLayoutMode.allCases, id: \.self) { mode in
+                        Text(layoutModeTitle(mode)).tag(mode)
+                    }
+                }
+                .onChange(of: viewLayoutMode) { _, newValue in
+                    NotificationCenter.default.post(name: .viewLayoutModeChanged, object: newValue)
+                    // 触发布局重建以应用新布局
+                    postLayoutChanged()
+                }
+            }
+
             Section("section_search_bar") {
                 Slider(value: $searchBarSlider, in: 0.0...1.0, step: 0.05) {
                     Text("search_bar_size")
@@ -206,6 +379,14 @@ struct AppearanceSettingsView: View {
     private func postLayoutChanged() {
         NotificationCenter.default.post(name: .layoutSettingsChanged, object: nil)
     }
+
+    /// 布局模式对应的本地化标题。
+    private func layoutModeTitle(_ mode: ViewLayoutMode) -> LocalizedStringKey {
+        switch mode {
+        case .horizontalPaging: return "horizontal_paging"
+        case .verticalScroll:   return "vertical_scroll"
+        }
+    }
 }
 
 // MARK: - 手势设置（简化版）
@@ -213,6 +394,12 @@ struct AppearanceSettingsView: View {
 struct GestureSettingsView: View {
     @ObservedObject private var pm = UserPreferencesManager.shared
     @State private var hasAccessibility: Bool = AXIsProcessTrusted()
+
+    // 热区（触发角）开关，与 AppDelegate 共享同一组 UserDefaults key。
+    @AppStorage("hotCornerTopLeft")     private var hotCornerTopLeft:     Bool = false
+    @AppStorage("hotCornerTopRight")    private var hotCornerTopRight:    Bool = false
+    @AppStorage("hotCornerBottomLeft")  private var hotCornerBottomLeft:  Bool = false
+    @AppStorage("hotCornerBottomRight") private var hotCornerBottomRight: Bool = false
 
     var body: some View {
         Form {
@@ -254,6 +441,18 @@ struct GestureSettingsView: View {
                     }
             }
 
+            // 热区（触发角）
+            Section("section_hot_corner") {
+                Toggle(HotCorner.topLeft.localizedName,     isOn: $hotCornerTopLeft)
+                    .onChange(of: hotCornerTopLeft) { _, _ in notifyHotCornerChanged() }
+                Toggle(HotCorner.topRight.localizedName,    isOn: $hotCornerTopRight)
+                    .onChange(of: hotCornerTopRight) { _, _ in notifyHotCornerChanged() }
+                Toggle(HotCorner.bottomLeft.localizedName,  isOn: $hotCornerBottomLeft)
+                    .onChange(of: hotCornerBottomLeft) { _, _ in notifyHotCornerChanged() }
+                Toggle(HotCorner.bottomRight.localizedName, isOn: $hotCornerBottomRight)
+                    .onChange(of: hotCornerBottomRight) { _, _ in notifyHotCornerChanged() }
+            }
+
             // 固定手势操作说明
             Section("section_gesture_actions") {
                 LabeledContent("open_panel") {
@@ -274,6 +473,10 @@ struct GestureSettingsView: View {
                         .foregroundStyle(.secondary)
                         .font(.system(.body, design: .monospaced))
                 }
+                LabeledContent("hot_corner_open") {
+                    Label("mouse_hover_corner", systemImage: "rectangle.dashed.and.paperclip")
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .formStyle(.grouped)
@@ -282,6 +485,16 @@ struct GestureSettingsView: View {
     private func openAccessibilitySettings() {
         let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
         NSWorkspace.shared.open(url)
+    }
+
+    /// 根据四个 Toggle 当前状态计算启用的角落集合，并通知 AppDelegate 更新 HotCornerMonitor。
+    private func notifyHotCornerChanged() {
+        var enabled: Set<HotCorner> = []
+        if hotCornerTopLeft     { enabled.insert(.topLeft) }
+        if hotCornerTopRight    { enabled.insert(.topRight) }
+        if hotCornerBottomLeft  { enabled.insert(.bottomLeft) }
+        if hotCornerBottomRight { enabled.insert(.bottomRight) }
+        NotificationCenter.default.post(name: .hotCornerSettingsChanged, object: enabled)
     }
 
     private func binding<T>(_ kp: WritableKeyPath<UserPreferences, T>) -> Binding<T> {

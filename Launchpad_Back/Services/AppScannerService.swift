@@ -59,27 +59,29 @@ class AppScannerService {
         return paths
     }
     
-    /// 掃描所有已安裝的應用程式
+    /// 掃描所有已安裝的應用程式，並合併使用者自訂來源路徑。
+    /// - Parameter customAppPaths: 使用者手動加入的 `.app` 路徑，
+    ///   會與系統目錄掃描結果合併，去重以 `stableIdentifier` 為準。
     /// - Returns: 應用程式陣列
-    func scanInstalledApps() -> [AppItem] {
+    func scanInstalledApps(customAppPaths: [URL] = []) -> [AppItem] {
         let group = DispatchGroup()
         let queue = DispatchQueue.global(qos: .userInitiated)
-        
+
         // 使用串行隊列保護共享狀態，比 NSLock 更安全且易於理解
         let resultQueue = DispatchQueue(label: "com.launchpad.scanner.results")
         var allApps: [AppItem] = []
-        
+
         // 並行掃描所有路徑（使用 autoreleasepool 優化記憶體）
         for (path, isSystemApp, recursive) in scanPaths {
             group.enter()
             queue.async { [weak self] in
                 defer { group.leave() }
-                
+
                 // 優化：使用 autoreleasepool 包裹整個掃描邏輯
                 autoreleasepool {
                     guard let self = self else { return }
                     let apps = self.scanAppsInDirectory(path, isSystemApp: isSystemApp, recursive: recursive)
-                    
+
                     // 在專用隊列中安全地添加結果
                     resultQueue.sync {
                         allApps.append(contentsOf: apps)
@@ -87,16 +89,60 @@ class AppScannerService {
                 }
             }
         }
-        
+
+        // 合併使用者自訂來源路徑（每個路徑單獨掃描，視為非系統應用）
+        for url in customAppPaths {
+            group.enter()
+            queue.async { [weak self] in
+                defer { group.leave() }
+                autoreleasepool {
+                    guard let self = self else { return }
+                    let apps = self.scanCustomApp(at: url)
+                    resultQueue.sync {
+                        allApps.append(contentsOf: apps)
+                    }
+                }
+            }
+        }
+
         group.wait()
-        
+
         // 過濾排除的應用、去重並排序
         let finalApps = removeDuplicates(from: allApps)
             .filter { !excludedBundleIDs.contains($0.bundleID) }
-            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-        
-        Logger.info("AppScannerService found \(finalApps.count) apps after filtering")
+            .sorted { $0.originalName.localizedCaseInsensitiveCompare($1.originalName) == .orderedAscending }
+
+        Logger.info("AppScannerService found \(finalApps.count) apps after filtering (custom sources: \(customAppPaths.count))")
         return finalApps
+    }
+
+    /// 掃描單一使用者自訂 `.app` 路徑。
+    /// 支援目錄或檔案，且若該路徑不存在會回傳空陣列。
+    private func scanCustomApp(at url: URL) -> [AppItem] {
+        let pathString = url.path
+        var isDirectory: ObjCBool = false
+        guard fileManager.fileExists(atPath: pathString, isDirectory: &isDirectory) else {
+            Logger.debug("AppScannerService: custom app path not found: \(pathString)")
+            return []
+        }
+
+        // 若是 .app 目錄，直接以該路徑建立 AppItem
+        if isDirectory.boolValue, pathString.hasSuffix(".app") {
+            let parent = (pathString as NSString).deletingLastPathComponent
+            let fileName = (pathString as NSString).lastPathComponent
+            if let app = createAppItem(from: fileName, in: parent, isSystemApp: false) {
+                return [app]
+            }
+            return []
+        }
+
+        // 若是普通目錄，遞迴掃描其中的 .app（非系統應用）
+        if isDirectory.boolValue {
+            return scanAppsInDirectory(pathString, isSystemApp: false, recursive: true)
+        }
+
+        // 其餘型態（檔案）不處理
+        return []
     }
     
     /// 在指定目錄中掃描應用程式

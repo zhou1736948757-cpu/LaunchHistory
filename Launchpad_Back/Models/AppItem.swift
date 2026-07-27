@@ -17,21 +17,38 @@ protocol LaunchpadItem: Identifiable, Hashable {
 /// 表示 macOS 應用程式的數據模型
 struct AppItem: LaunchpadItem {
     let id: UUID
-    let name: String
+    /// 掃描自 Info.plist / 檔名的原始名稱，永不變動。
+    let originalName: String
+    /// 使用者自訂名稱。`nil` 或空字串表示使用 `originalName`。
+    /// 由 `LaunchpadViewModel.renameApp` 寫入並觸發刷新，
+    /// 此屬性不直接讀 UserDefaults，避免每幀 IO。
+    var customName: String?
     let bundleID: String
     let path: String
     let isSystemApp: Bool
     var displayOrder: Int = 0
     var isHidden: Bool = false
-    
+
+    /// 對外展示名稱：自訂名稱優先，其次回退到原始名稱。
+    /// 供 UI 顯示與排序使用。
+    var displayName: String {
+        if let custom = customName?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !custom.isEmpty {
+            return custom
+        }
+        return originalName
+    }
+
     /// 初始化應用程式項目
     /// - Parameters:
     ///   - id: 唯一識別碼（默認自動生成，用於持久化時可指定）
-    ///   - name: 應用程式名稱
+    ///   - name: 應用程式原始名稱（掃描自 Info.plist / 檔名）
     ///   - bundleID: Bundle 識別碼
     ///   - path: 應用程式路徑
     ///   - isSystemApp: 是否為系統應用
     ///   - displayOrder: 顯示順序
+    ///   - isHidden: 是否隱藏
+    ///   - customName: 使用者自訂名稱（可選）
     init(
         id: UUID = UUID(),
         name: String,
@@ -39,26 +56,36 @@ struct AppItem: LaunchpadItem {
         path: String,
         isSystemApp: Bool,
         displayOrder: Int = 0,
-        isHidden: Bool = false
+        isHidden: Bool = false,
+        customName: String? = nil
     ) {
         self.id = id
-        self.name = name
+        self.originalName = name
+        self.customName = customName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            ? customName
+            : nil
         self.bundleID = bundleID
         self.path = path
         self.isSystemApp = isSystemApp
         self.displayOrder = displayOrder
         self.isHidden = isHidden
     }
+
+    /// 為了相容 `LaunchpadItem` 協議與既有呼叫端，
+    /// `name` 仍指向展示名稱（等同 `displayName`）。
+    /// 內部需要原始名稱時請使用 `originalName`。
+    var name: String { displayName }
+
     /// 用於持久化與去重的穩定識別鍵。
     /// 某些 App 沒有 bundle ID，此時退回使用安裝路徑。
     var stableIdentifier: String {
         bundleID.isEmpty ? path : bundleID
     }
-    
+
     func hash(into hasher: inout Hasher) {
         hasher.combine(stableIdentifier)
     }
-    
+
     static func == (lhs: AppItem, rhs: AppItem) -> Bool {
         lhs.stableIdentifier == rhs.stableIdentifier
     }

@@ -87,7 +87,17 @@ struct LaunchpadView: View {
     @State private var expandedFolder: AppFolder?
     @State private var showingResetConfirmation = false
     @State private var floatingDragState = FloatingDragState()
-    
+    /// 垂直滚动模式下，网格在全局坐标空间中的 frame（随滚动更新）。
+    /// 用于在垂直模式计算拖放落点目标（替代分页布局）。
+    @State private var verticalGridFrame: CGRect = .zero
+    /// 当前是否处于三指拖动中。用于区分三指拖动源与编辑模式拖动：
+    /// 三指拖动不进编辑模式，拖完直接 drop；该标志阻止 onDragChanged/onDragEnded
+    /// 在三指拖动进行时被编辑模式手势重复处理。
+    @State private var threeFingerDragActive = false
+    /// 最近一次 GeometryReader 报告的尺寸。三指拖动通知处理器在视图树外触发，
+    /// 拿不到 GeometryProxy，用此缓存计算 currentGridLayout / 边缘换页 / 落点目标。
+    @State private var lastGeometrySize: CGSize = .zero
+
     private var filteredItems: [LaunchpadDisplayItem] {
         launchpadVM.filteredDisplayItems(matching: searchVM.searchText)
     }
@@ -173,6 +183,8 @@ struct LaunchpadView: View {
                                         editModeManager.enterEditMode()
                                     },
                                     onDragChanged: { itemId, location in
+                                        // 三指拖动进行中：忽略 SwiftUI 单指/长按拖动事件，避免状态冲突
+                                        guard !threeFingerDragActive else { return }
                                         if floatingDragState.item == nil,
                                            let item = filteredItems.first(where: { $0.id == itemId }) {
                                             floatingDragState.item = item
@@ -189,6 +201,8 @@ struct LaunchpadView: View {
                                         floatingDragState.dropTargetIndex = result.targetIndex
                                     },
                                     onDragEnded: { _ in
+                                        // 三指拖动进行中：忽略 SwiftUI 单指/长按拖动结束
+                                        guard !threeFingerDragActive else { return }
                                         handleFloatingDrop()
                                         floatingDragState.clear()
                                     }
@@ -220,6 +234,8 @@ struct LaunchpadView: View {
                                 editModeManager.enterEditMode()
                             },
                             onDragChanged: { itemId, location in
+                                // 三指拖动进行中：忽略 SwiftUI 单指/长按拖动事件，避免状态冲突
+                                guard !threeFingerDragActive else { return }
                                 if floatingDragState.item == nil,
                                    let item = filteredItems.first(where: { $0.id == itemId }) {
                                     floatingDragState.item = item
@@ -234,14 +250,22 @@ struct LaunchpadView: View {
                                 floatingDragState.dropTargetIndex = result.targetIndex
                             },
                             onDragEnded: { _ in
+                                // 三指拖动进行中：忽略 SwiftUI 单指/长按拖动结束
+                                guard !threeFingerDragActive else { return }
                                 handleFloatingDrop()
                                 floatingDragState.clear()
+                            },
+                            onGridFrameChanged: { frame in
+                                // 仅当 frame 真正变化时更新，避免空闲滚动期间频繁重渲染
+                                if frame != verticalGridFrame {
+                                    verticalGridFrame = frame
+                                }
                             }
                         )
                     }
                     
-                    // 頁面指示器
-                    if totalPages > 1 && searchVM.searchText.isEmpty {
+                    // 頁面指示器（仅水平分页模式显示；垂直模式无分页概念）
+                    if viewLayoutMode == .horizontalPaging && totalPages > 1 && searchVM.searchText.isEmpty {
                         PageIndicatorView(
                             currentPage: paginationVM.currentPage,
                             totalPages: totalPages,
@@ -337,12 +361,15 @@ struct LaunchpadView: View {
                 paginationVM.updateScreenSize(geometry.size)
                 launchpadVM.loadInstalledApps()
                 launchpadVM.updateActivePage(paginationVM.currentPage, itemsPerPage: paginationVM.appsPerPage)
+                lastGeometrySize = geometry.size
                 setupEventManagers()
             }
             .onChange(of: geometry.size) { _, newSize in
                 paginationVM.updateScreenSize(newSize)
                 paginationVM.validateCurrentPage(totalPages: totalPages)
                 launchpadVM.updateActivePage(paginationVM.currentPage, itemsPerPage: paginationVM.appsPerPage)
+                // 同步缓存供三指拖动通知处理器使用
+                lastGeometrySize = newSize
             }
             .onChange(of: paginationVM.currentPage) { _, newPage in
                 launchpadVM.updateActivePage(newPage, itemsPerPage: paginationVM.appsPerPage)
@@ -351,8 +378,17 @@ struct LaunchpadView: View {
                 paginationVM.validateCurrentPage(totalPages: totalPages)
                 launchpadVM.updateActivePage(paginationVM.currentPage, itemsPerPage: paginationVM.appsPerPage)
             }
+            // 三指拖动：订阅 Coordinator 派发的通知（已切主线程），驱动状态机。
+            // 用 onReceive 而非手动 addObserver，避免 struct self 捕获问题，
+            // SwiftUI 自动随视图生命周期管理订阅。
+            .onReceive(NotificationCenter.default.publisher(for: .threeFingerDragUIEvent)) { notification in
+                guard let event = notification.object as? ThreeFingerDragUIEvent else { return }
+                handleThreeFingerDragEvent(event)
+            }
             .onDisappear {
                 teardownEventManagers()
+                // 视图消失时若仍在三指拖动中，复位状态避免悬挂
+                threeFingerDragActive = false
             }
         }
     }
@@ -523,12 +559,39 @@ struct LaunchpadView: View {
     @State private var isWaitingForEdgeExit: Bool = false  // 等待離開邊緣
 
     private func currentGridLayout(in geometry: GeometryProxy) -> GridScreenLayout {
+        currentGridLayout(size: geometry.size)
+    }
+
+    /// 仅依赖 CGSize 的重载，供三指拖动通知处理器（拿不到 GeometryProxy）复用。
+    private func currentGridLayout(size: CGSize) -> GridScreenLayout {
         let layoutConfig = paginationVM.layoutConfig
+
+        // 垂直滚动模式：网格 frame 由 VerticalScrollView 上报（已含滚动位移），
+        // 用全量 items 计算行数，而非单页行数
+        if viewLayoutMode == .verticalScroll {
+            let totalRows = max(1, Int(ceil(Double(filteredItems.count) / Double(layoutConfig.columns))))
+            let gridHeight = GridLayoutManager.gridHeight(rowCount: totalRows)
+            // verticalGridFrame 为全局坐标；保持其 origin，高度补全为完整网格高度
+            let frame = CGRect(
+                origin: verticalGridFrame.origin,
+                size: CGSize(width: layoutConfig.gridWidth, height: gridHeight)
+            )
+            return GridScreenLayout(
+                frame: frame,
+                columns: layoutConfig.columns,
+                itemWidth: GridLayoutManager.itemWidth,
+                itemHeight: GridLayoutManager.itemHeight,
+                horizontalSpacing: GridLayoutManager.horizontalSpacing,
+                verticalSpacing: GridLayoutManager.verticalSpacing
+            )
+        }
+
+        // 水平分页模式：网格居中于可用区域
         let topAreaHeight = GridLayoutManager.headerAreaHeight
         let bottomAreaHeight = GridLayoutManager.footerAreaHeight
-        let availableHeight = geometry.size.height - topAreaHeight - bottomAreaHeight
+        let availableHeight = size.height - topAreaHeight - bottomAreaHeight
         let origin = CGPoint(
-            x: (geometry.size.width - layoutConfig.gridWidth) / 2,
+            x: (size.width - layoutConfig.gridWidth) / 2,
             y: topAreaHeight + (availableHeight - layoutConfig.gridHeight) / 2
         )
 
@@ -544,7 +607,11 @@ struct LaunchpadView: View {
     
     /// 使用絕對螢幕位置檢測邊緣換頁
     private func checkEdgeForPageChange(screenLocation: CGPoint, geometry: GeometryProxy) -> (pageChanged: Bool, previousPage: Int) {
-        let screenWidth = geometry.size.width
+        checkEdgeForPageChange(screenLocation: screenLocation, screenWidth: geometry.size.width)
+    }
+
+    /// 仅依赖 screenWidth 的重载，供三指拖动通知处理器复用。
+    private func checkEdgeForPageChange(screenLocation: CGPoint, screenWidth: CGFloat) -> (pageChanged: Bool, previousPage: Int) {
         let edgeThreshold: CGFloat = 50
         let previousPage = paginationVM.currentPage
         
@@ -604,8 +671,16 @@ struct LaunchpadView: View {
     
     /// 使用絕對螢幕位置查找 drop target
     private func findDropTargetByScreenLocation(at screenLocation: CGPoint, excludingId: UUID, in geometry: GeometryProxy) -> (targetId: UUID?, targetIndex: Int) {
-        let gridLayout = currentGridLayout(in: geometry)
-        let pageItems = paginationVM.itemsForPage(filteredItems, page: paginationVM.currentPage)
+        findDropTargetByScreenLocation(at: screenLocation, excludingId: excludingId, size: geometry.size)
+    }
+
+    /// 仅依赖 CGSize 的重载，供三指拖动通知处理器复用。
+    private func findDropTargetByScreenLocation(at screenLocation: CGPoint, excludingId: UUID, size: CGSize) -> (targetId: UUID?, targetIndex: Int) {
+        let gridLayout = currentGridLayout(size: size)
+        // 垂直模式使用全量 items（单列滚动，无分页）；水平模式仍按当前页命中
+        let pageItems = viewLayoutMode == .verticalScroll
+            ? filteredItems
+            : paginationVM.itemsForPage(filteredItems, page: paginationVM.currentPage)
 
         guard let targetIndex = gridLayout.clampedIndex(
             at: screenLocation,
@@ -654,9 +729,10 @@ struct LaunchpadView: View {
     /// 處理浮動拖曳放置
     private func handleFloatingDrop() {
         guard let item = floatingDragState.item else { return }
-        
+
         let itemsPerPage = paginationVM.layoutConfig.itemsPerPage
-        let pageOffset = paginationVM.currentPage * itemsPerPage
+        // 垂直模式无分页，目标索引即全局索引；水平模式需加上当前页偏移
+        let pageOffset = viewLayoutMode == .verticalScroll ? 0 : paginationVM.currentPage * itemsPerPage
         let isFromGrid = floatingDragState.startedInGrid
         
         if let targetId = floatingDragState.dropTargetId,
@@ -738,7 +814,112 @@ struct LaunchpadView: View {
         }
         gestureManager?.startListening()
     }
-    
+
+    // MARK: - 三指拖动状态机
+
+    /// 三指拖动事件分发入口。
+    /// - begin: 反查指针下图标作为 draggingItem，复用 onDragChanged 逻辑，
+    ///          不进编辑模式。
+    /// - change: 更新浮动图标位置 + 落点目标（含边缘换页）。
+    /// - end: 调 handleFloatingDrop 并清理（不进编辑模式）。
+    private func handleThreeFingerDragEvent(_ event: ThreeFingerDragUIEvent) {
+        switch event {
+        case .begin(let mouseLocation):
+            beginThreeFingerDrag(at: mouseLocation)
+        case .change(let mouseLocation):
+            updateThreeFingerDrag(to: mouseLocation)
+        case .end:
+            endThreeFingerDrag()
+        }
+    }
+
+    /// 三指拖动开始：用鼠标位置反查指针下图标，设为 draggingItem。
+    /// 不进编辑模式（区别于长按拖动）。
+    private func beginThreeFingerDrag(at mouseLocation: CGPoint) {
+        // 若已有正在进行的拖动（编辑模式或上次三指拖动未清理），先收尾
+        if floatingDragState.item != nil {
+            handleFloatingDrop()
+            floatingDragState.clear()
+        }
+
+        guard let item = findItemAtScreenLocation(at: mouseLocation) else {
+            // 指针不在任何图标上：仍标记为活跃，但 draggingItem 为空，
+            // 这样 change 期间若鼠标滑入图标区也不会误起拖动（需要 begin 时命中）
+            threeFingerDragActive = true
+            Logger.debug("ThreeFingerDrag: begin 但指针下无图标，进入待命状态")
+            return
+        }
+
+        floatingDragState.item = item
+        floatingDragState.draggingItemId = item.id
+        floatingDragState.startedInGrid = true
+        floatingDragState.location = mouseLocation
+        threeFingerDragActive = true
+
+        // 初始落点目标（用复用逻辑）
+        let dropResult = findDropTargetByScreenLocation(at: mouseLocation,
+                                                        excludingId: item.id,
+                                                        size: lastGeometrySize)
+        floatingDragState.dropTargetId = dropResult.targetId
+        floatingDragState.dropTargetIndex = dropResult.targetIndex
+
+        Logger.info("ThreeFingerDrag: 选中 \(item.name) 作为拖动源 @ global=\(mouseLocation)")
+    }
+
+    /// 三指拖动位置更新：复用 onDragChanged 的落点计算逻辑。
+    private func updateThreeFingerDrag(to mouseLocation: CGPoint) {
+        guard threeFingerDragActive, let item = floatingDragState.item else { return }
+
+        floatingDragState.location = mouseLocation
+
+        // 边缘换页（仅水平分页模式）
+        _ = checkEdgeForPageChange(screenLocation: mouseLocation, screenWidth: lastGeometrySize.width)
+
+        let result = findDropTargetByScreenLocation(at: mouseLocation,
+                                                    excludingId: item.id,
+                                                    size: lastGeometrySize)
+        floatingDragState.dropTargetId = result.targetId
+        floatingDragState.dropTargetIndex = result.targetIndex
+    }
+
+    /// 三指拖动结束：直接 drop（不进编辑模式）。
+    private func endThreeFingerDrag() {
+        guard threeFingerDragActive else { return }
+        threeFingerDragActive = false
+
+        if floatingDragState.item != nil {
+            handleFloatingDrop()
+        }
+        floatingDragState.clear()
+    }
+
+    /// 在全局坐标(与 DragGesture.location 同空间)反查指针下图标。
+    /// 多屏/scroll offset/page offset/搜索结果索引均由 currentGridLayout 与
+    /// filteredItems/itemsForPage 自然覆盖，无需手动行列推算。
+    /// - Parameter location: SwiftUI `.global` 坐标
+    /// - Returns: 命中的 LaunchpadDisplayItem，未命中返回 nil
+    private func findItemAtScreenLocation(at location: CGPoint) -> LaunchpadDisplayItem? {
+        let gridLayout = currentGridLayout(size: lastGeometrySize)
+        let pageItems = viewLayoutMode == .verticalScroll
+            ? filteredItems
+            : paginationVM.itemsForPage(filteredItems, page: paginationVM.currentPage)
+
+        guard let rawIndex = gridLayout.rawIndex(at: location) else { return nil }
+        guard rawIndex >= 0, rawIndex < pageItems.count else { return nil }
+
+        let item = pageItems[rawIndex]
+        // 命中检测：点落在该 item 的 cell 内即算命中（不必靠近中心，
+        // 因为这里要的是"指针停在哪格"作为拖动源，而非落点）
+        let center = gridLayout.itemCenter(at: rawIndex)
+        let halfCellW = (gridLayout.itemWidth + gridLayout.horizontalSpacing) / 2
+        let halfCellH = (gridLayout.itemHeight + gridLayout.verticalSpacing) / 2
+        if abs(location.x - center.x) <= halfCellW &&
+           abs(location.y - center.y) <= halfCellH {
+            return item
+        }
+        return nil
+    }
+
     private func teardownEventManagers() {
         keyboardManager?.stopListening()
         gestureManager?.stopListening()
