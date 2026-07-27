@@ -91,6 +91,23 @@ final class LaunchpadViewModel: ObservableObject {
         self.customNameStore = customNameStore
         self.customAppSourceStore = customAppSourceStore
         Logger.info("LaunchpadViewModel initialized with memory optimizations")
+        // 监听其他实例（如设置页独立 ViewModel）的数据变更通知，刷新本实例。
+        // 解决设置页用独立 LaunchpadViewModel 实例导致操作不同步到主界面的问题。
+        NotificationCenter.default.addObserver(
+            forName: .launchpadDataChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            // 收到通知说明另一个实例改了 UserDefaults 里的数据（自定义名/来源/隐藏），
+            // 重新加载以同步。loadInstalledApps 内部有 isLoading 防重入。
+            self?.loadInstalledApps()
+        }
+    }
+
+    /// 通知其他 LaunchpadViewModel 实例（如主界面的）数据已变更，需要刷新。
+    /// 用于设置页独立实例改完数据后，让主界面实例重新加载同步。
+    private func notifyOtherInstances() {
+        NotificationCenter.default.post(name: .launchpadDataChanged, object: nil)
     }
     
     deinit {
@@ -159,12 +176,14 @@ final class LaunchpadViewModel: ObservableObject {
                 }
                 reconciledItems.append(.app(latestApp))
             case .folder(let folder):
-                let filteredFolderApps = folder.apps.filter { !isAppHidden($0) }
-                guard let latestFolder = foldersById.removeValue(forKey: folder.id),
-                      !filteredFolderApps.isEmpty else {
+                // 用 latestFolder（最新数据）而非 displayItems 里的旧 folder，
+                // 否则 renameFolder / folder 内 renameApp 后 UI 不刷新。
+                guard let latestFolder = foldersById.removeValue(forKey: folder.id) else {
                     continue
                 }
-                let updatedFolder = AppFolder(id: folder.id, name: folder.name, apps: filteredFolderApps)
+                let filteredFolderApps = latestFolder.apps.filter { !isAppHidden($0) }
+                guard !filteredFolderApps.isEmpty else { continue }
+                let updatedFolder = AppFolder(id: latestFolder.id, name: latestFolder.name, apps: filteredFolderApps)
                 reconciledItems.append(.folder(updatedFolder))
             }
         }
@@ -512,6 +531,7 @@ final class LaunchpadViewModel: ObservableObject {
         // 同步 visible apps 與顯示列表
         apps = allApps.filter { !isAppHidden($0) }
         reconcileDisplayItems()
+        notifyOtherInstances()
     }
 
     /// 检查应用是否被隐藏
@@ -557,6 +577,7 @@ final class LaunchpadViewModel: ObservableObject {
         // 2. 同步 in-memory AppItem 並刷新顯示
         applyCustomName(effective, toStableIdentifier: app.stableIdentifier)
         Logger.info("Renamed app '\(app.originalName)' -> '\(effective ?? app.originalName)'")
+        notifyOtherInstances()
     }
 
     /// 把新的 customName 套用到 allApps/apps/folders/displayItems 中對應的 AppItem，
@@ -639,6 +660,7 @@ final class LaunchpadViewModel: ObservableObject {
                 self.invalidateSearchCaches()
                 self.reconcileDisplayItems()
                 self.isLoading = false
+                self.notifyOtherInstances()
             }
         }
     }
@@ -674,6 +696,7 @@ final class LaunchpadViewModel: ObservableObject {
         searchIndex = searchState.index
         invalidateSearchCaches()
         reconcileDisplayItems()
+        notifyOtherInstances()
 
         Logger.info("Removed app '\(app.displayName)' from launchpad data after uninstall")
     }

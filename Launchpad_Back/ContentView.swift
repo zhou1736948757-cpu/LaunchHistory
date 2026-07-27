@@ -987,6 +987,9 @@ struct LaunchpadView: View {
 // MARK: - 通知扩展
 extension Notification.Name {
     static let viewLayoutModeChanged = Notification.Name("viewLayoutModeChanged")
+    /// 设置页（独立 ViewModel 实例）改了数据后发此通知，
+    /// 主界面的 ViewModel 监听后 loadInstalledApps 刷新，避免设置页操作不同步到主界面。
+    static let launchpadDataChanged = Notification.Name("launchpadDataChanged")
 }
 
 // MARK: - 可編輯的頁面視圖
