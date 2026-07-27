@@ -343,8 +343,9 @@ struct LaunchpadView: View {
                 }
             }
             // 分页拖动移到外层 ZStack，释放网格区域的命中（避免 contentShape 拦截空白点击）
+            // 三指拖动进行中禁用分页拖动，避免拖图标时整个页面跟着移动
             .gesture(
-                (viewLayoutMode == .horizontalPaging && !editModeManager.isEditing) ?
+                (viewLayoutMode == .horizontalPaging && !editModeManager.isEditing && !threeFingerDragActive) ?
                 DragGesture(minimumDistance: 20)
                     .onChanged { dragAmount = $0.translation }
                     .onEnded(handleDragEnd) : nil

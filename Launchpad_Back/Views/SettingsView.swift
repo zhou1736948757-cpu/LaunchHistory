@@ -225,7 +225,14 @@ struct GeneralSettingsView: View {
                 .foregroundStyle(.secondary)
         } else {
             ForEach(entries) { entry in
-                HStack {
+                HStack(spacing: 10) {
+                    // 应用图标（path 为 nil 时用占位符）
+                    CachedAppIconImage(path: entry.path ?? "", appName: entry.name) {
+                        IconLoadingPlaceholder(cornerRadius: 6)
+                    }
+                    .frame(width: 28, height: 28)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+
                     VStack(alignment: .leading, spacing: 2) {
                         Text(entry.name)
                             .font(.body)

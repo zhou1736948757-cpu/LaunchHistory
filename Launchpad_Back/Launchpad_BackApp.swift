@@ -122,14 +122,25 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     /// 检查并请求辅助功能权限（手势全局监听需要）
+    /// 只在首次启动时弹系统对话框；用户拒绝后不再每次启动都弹（避免烦扰）。
+    /// 用户可在设置-手势页手动重新触发授权。
     private func requestAccessibilityPermissionIfNeeded() {
         let trusted = AXIsProcessTrusted()
         Logger.info("Accessibility trusted: \(trusted)")
-        if !trusted {
-            // 弹出系统权限请求对话框
-            let options: NSDictionary = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
-            AXIsProcessTrustedWithOptions(options)
+        if trusted { return }
+
+        // 已授权或之前已提示过且拒绝，就不再弹
+        let key = "didPromptAccessibility"
+        let didPrompt = UserDefaults.standard.bool(forKey: key)
+        if didPrompt {
+            Logger.info("Accessibility prompt already shown before, skip auto-prompt")
+            return
         }
+
+        // 首次：弹系统权限请求对话框
+        let options: NSDictionary = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
+        AXIsProcessTrustedWithOptions(options)
+        UserDefaults.standard.set(true, forKey: key)
     }
 
     /// 重建手势识别器（设置面板切换手势开关时调用）
