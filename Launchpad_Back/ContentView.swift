@@ -313,6 +313,12 @@ struct LaunchpadView: View {
 
                             launchpadVM.removeAppFromFolder(app: app, folder: folder, placement: .floatingDrag)
                             editModeManager.enterEditMode()
+
+                            // 拖出瞬间立即收起文件夹，露出下方网格让用户看清放置位置。
+                            // 之前只在 onDragOutEnd（松手时）才收起，导致拖动过程文件夹一直挡住网格。
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                expandedFolder = nil
+                            }
                         },
                         onDragOutContinue: { screenLocation in
                             floatingDragState.location = screenLocation
@@ -843,6 +849,25 @@ struct LaunchpadView: View {
             floatingDragState.clear()
         }
 
+        // 文件夹展开时：优先在文件夹内反查图标，命中则走"拖出文件夹"逻辑
+        if let folder = expandedFolder,
+           let (app, _) = findFolderItemAtScreenLocation(at: mouseLocation, in: folder) {
+            floatingDragState.item = .app(app)
+            floatingDragState.draggingItemId = app.id
+            floatingDragState.startedInGrid = false  // 来自文件夹，非主网格
+            floatingDragState.location = mouseLocation
+            threeFingerDragActive = true
+
+            // 移出文件夹 + 进编辑模式 + 立即收起文件夹露出网格
+            launchpadVM.removeAppFromFolder(app: app, folder: folder, placement: .floatingDrag)
+            editModeManager.enterEditMode()
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                expandedFolder = nil
+            }
+            Logger.info("ThreeFingerDrag: 从文件夹拖出 \(app.name)")
+            return
+        }
+
         guard let item = findItemAtScreenLocation(at: mouseLocation) else {
             // 指针不在任何图标上：仍标记为活跃，但 draggingItem 为空，
             // 这样 change 期间若鼠标滑入图标区也不会误起拖动（需要 begin 时命中）
@@ -917,6 +942,51 @@ struct LaunchpadView: View {
         if abs(location.x - center.x) <= halfCellW &&
            abs(location.y - center.y) <= halfCellH {
             return item
+        }
+        return nil
+    }
+
+    /// 在展开的文件夹内反查指针下图标（用于三指拖动从文件夹拖出）。
+    /// 布局算法对齐 FolderExpandedView.expandedLayout，确保命中一致。
+    /// - Returns: 命中的 (app, folder内index)，未命中返回 nil
+    private func findFolderItemAtScreenLocation(at location: CGPoint, in folder: AppFolder) -> (AppItem, Int)? {
+        let folderColumns = 4
+        let itemWidth = GridLayoutManager.itemWidth
+        let itemHeight = GridLayoutManager.itemHeight
+        let hSpacing = GridLayoutManager.horizontalSpacing
+        let vSpacing = GridLayoutManager.verticalSpacing
+
+        let itemsWidth = CGFloat(folderColumns) * itemWidth
+        let spacingWidth = CGFloat(folderColumns - 1) * hSpacing
+        let contentWidth = itemsWidth + spacingWidth + 48
+
+        // FolderExpandedView 用 contentFrame 居中，gridOrigin 偏移 24px
+        let contentFrameMinX = (lastGeometrySize.width - contentWidth) / 2
+        let contentFrameMinY = (lastGeometrySize.height - 400) / 2
+        let gridOrigin = CGPoint(
+            x: contentFrameMinX + 24,
+            y: contentFrameMinY + 82   // 非编辑模式偏移（编辑模式 108，取较小值覆盖更广）
+        )
+
+        let gridLayout = GridScreenLayout(
+            frame: CGRect(origin: gridOrigin,
+                          size: CGSize(width: contentWidth - 48, height: 400)),
+            columns: folderColumns,
+            itemWidth: itemWidth,
+            itemHeight: itemHeight,
+            horizontalSpacing: hSpacing,
+            verticalSpacing: vSpacing
+        )
+
+        guard let rawIndex = gridLayout.rawIndex(at: location) else { return nil }
+        guard rawIndex >= 0, rawIndex < folder.apps.count else { return nil }
+
+        let center = gridLayout.itemCenter(at: rawIndex)
+        let halfCellW = (itemWidth + hSpacing) / 2
+        let halfCellH = (itemHeight + vSpacing) / 2
+        if abs(location.x - center.x) <= halfCellW &&
+           abs(location.y - center.y) <= halfCellH {
+            return (folder.apps[rawIndex], rawIndex)
         }
         return nil
     }
