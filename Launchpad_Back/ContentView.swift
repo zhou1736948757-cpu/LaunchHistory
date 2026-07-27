@@ -114,16 +114,13 @@ struct LaunchpadView: View {
     var body: some View {
         GeometryReader { geometry in
             ZStack {
-                // 背景（NSVisualEffectView 会吞掉鼠标事件，SwiftUI 的 onTapGesture 收不到，
-                // 因此背景本身不挂手势；空白点击交给下面的透明捕获层处理）
+                // 背景：allowsHitTesting(false) 让 NSVisualEffectView 只负责渲染，不参与命中
                 LaunchpadBackgroundView()
+                    .allowsHitTesting(false)
 
-                // 空白点击捕获层：纯 SwiftUI Color 才能可靠接收点击。
-                // 放在背景之上、VStack 之下：图标/网格在上层优先命中测试，
-                // 点击落在空白处时由本层拦截并走 handleEscapeKey()（分级处理：
-                // 编辑模式→退出编辑，文件夹→收起，有搜索→清空，否则→hideWindow）。
-                // 同时确保整个窗口内容都参与 hit-testing，避免点击穿透到后面 UI。
-                Color.clear
+                // 空白点击捕获层：覆盖全屏，图标在上层优先命中，空白处落到本层
+                Rectangle()
+                    .fill(Color.clear)
                     .ignoresSafeArea()
                     .contentShape(Rectangle())
                     .onTapGesture {
@@ -144,8 +141,8 @@ struct LaunchpadView: View {
 
                         Spacer().frame(height: 4)
                     }
-                    
-                    // 應用程式網格
+
+                    // 應用程式網格（去掉全屏 contentShape + DragGesture，让空白点击能穿透到捕获层）
                     if viewLayoutMode == .horizontalPaging {
                         ZStack {
                             ForEach(renderedPageIndices, id: \.self) { pageIndex in
@@ -163,8 +160,6 @@ struct LaunchpadView: View {
                                         switch item {
                                         case .app(let app):
                                             if !editModeManager.isEditing {
-                                                // 先隐藏 Launchpad，再启动 APP
-                                                // （主窗口是 .screenSaver 层级，不隐藏的话会盖在启动的 APP 上面）
                                                 hideWindow()
                                                 launchpadVM.launchApp(app)
                                             }
@@ -201,13 +196,6 @@ struct LaunchpadView: View {
                             }
                         }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .contentShape(Rectangle())
-                        .gesture(
-                            editModeManager.isEditing ? nil :
-                            DragGesture(minimumDistance: 20)
-                                .onChanged { dragAmount = $0.translation }
-                                .onEnded(handleDragEnd)
-                        )
                     } else {
                         VerticalScrollView(
                             items: filteredItems,
@@ -330,6 +318,13 @@ struct LaunchpadView: View {
                     floatingDragOverlay(item: item, location: floatingDragState.location, in: geometry)
                 }
             }
+            // 分页拖动移到外层 ZStack，释放网格区域的命中（避免 contentShape 拦截空白点击）
+            .gesture(
+                (viewLayoutMode == .horizontalPaging && !editModeManager.isEditing) ?
+                DragGesture(minimumDistance: 20)
+                    .onChanged { dragAmount = $0.translation }
+                    .onEnded(handleDragEnd) : nil
+            )
             .alert("reset_layout_title", isPresented: $showingResetConfirmation) {
                 Button("cancel", role: .cancel) {}
                 Button("reset", role: .destructive) {

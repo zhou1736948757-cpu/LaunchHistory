@@ -141,12 +141,9 @@ struct InteractiveIconConfig {
 /// 交互式圖標容器 ViewModifier - 提取共用邏輯
 struct InteractiveIconModifier: ViewModifier {
     let config: InteractiveIconConfig
-    
+
     @State private var dragOffset: CGSize = .zero
     @State private var didTriggerLongPressDrag = false
-    /// 0.2s 長按識別成功後置 true，用於抑制本次按住期間的 tap 與 editDrag，
-    /// 讓「按住 0.2s 進入編輯模式 + 同一次按住繼續拖動」由 longPressInteractionGesture 統一負責。
-    @State private var didLongPress = false
 
     func body(content: Content) -> some View {
         content
@@ -155,47 +152,40 @@ struct InteractiveIconModifier: ViewModifier {
             .overlay(dropTargetOverlay)
             .offset(dragOffset)
             .contentShape(Rectangle())
-            // 三個手勢均以 simultaneous 共存：長按 0.2s 識別後用 didLongPress 標記
-            // 統一接管，避免 tap 誤開應用、避免與 editDrag 重複追蹤拖動。
-            .simultaneousGesture(longPressInteractionGesture)
+            // 恢复基线手势组合（8cf98a7 验证可用）：
+            // - editDragGesture 用 highPriorityGesture，确保编辑模式拖动优先
+            // - tap 和 longPress 用 simultaneousGesture，纯点击打开应用，
+            //   长按 0.2s 进编辑模式（不依赖 didLongPress 状态抑制 tap）
+            .highPriorityGesture(editDragGesture, including: .gesture)
             .simultaneousGesture(tapGesture)
-            .simultaneousGesture(editDragGesture)
+            .simultaneousGesture(longPressInteractionGesture)
     }
-    
-    // MARK: - 手勢
-    
+
+    // MARK: - 手势
+
     private var tapGesture: some Gesture {
         TapGesture()
             .onEnded {
-                // 長按已識別（進入編輯模式或拖動中）時抑制單擊，避免誤開應用；
-                // 純點擊（按下即抬起、未達 0.2s）仍會走到這裡開啟應用。
-                guard !didLongPress else { return }
                 config.onTap()
             }
     }
 
-    /// 按住 0.2s 進入抖動編輯模式，並在同一按住手勢中繼續拖動改位置/生成文件夾（HyperOS 風格）。
+    /// 按住 0.2s 进入抖动编辑模式（HyperOS 风格：长按后不松手即可拖动）
     private var longPressInteractionGesture: some Gesture {
         LongPressGesture(minimumDuration: 0.2)
-            .onChanged { _ in
-                // 0.2s 到達：長按識別成功。標記以抑制 tap 與 editDrag，
-                // 讓本次按住由本手勢統一負責（進入編輯模式 + 後續拖動）。
-                didLongPress = true
-            }
             .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .global))
             .onChanged { value in
                 switch value {
                 case .second(true, let drag?):
                     if !didTriggerLongPressDrag {
-                        // 首次拖動：若尚未處於編輯模式，觸發進入編輯模式（所有圖標開始抖動）
+                        // 首次拖动：若尚未处于编辑模式，触发进入编辑模式（所有图标开始抖动）
                         if !config.isEditing {
                             Logger.info("Long press detected on \(config.name)")
                             config.onLongPress?()
                         }
                         didTriggerLongPressDrag = true
                     }
-                    // 即便 isEditing 已因 enterEditMode() 翻轉為 true，仍持續追蹤拖動，
-                    // 實現「按住 0.2s 進入編輯模式後不鬆手即可拖動改位置/生成文件夾」。
+                    // 即便 isEditing 已因 enterEditMode() 翻转为 true，仍持续追踪拖动
                     dragOffset = drag.translation
                     config.onDragChanged?(drag.location)
                 default:
@@ -213,35 +203,29 @@ struct InteractiveIconModifier: ViewModifier {
                     }
                     config.onDragEnded?()
                 default:
-                    // .first(true) 或 .second(true, nil)：長按識別但未發生拖動
                     break
                 }
 
-                // 長按識別後若沒有拖動，且尚未進入編輯模式，則進入編輯模式
+                // 长按识别后若没有拖动，且尚未进入编辑模式，则进入编辑模式
                 if !didDrag, !didTriggerLongPressDrag, !config.isEditing {
                     Logger.info("Long press detected on \(config.name)")
                     config.onLongPress?()
                 }
 
                 didTriggerLongPressDrag = false
-                // 延後重置 didLongPress，確保同幀釋放觸發的 tap.onEnded 仍能讀到 true 而被抑制
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                    didLongPress = false
-                }
             }
     }
 
-    /// 編輯模式下的快速拖動（移動超過 5pt 即觸發）。
-    /// 當 longPressInteractionGesture 已識別長按（didLongPress=true）時讓出拖動權，避免重複追蹤。
+    /// 编辑模式下的快速拖动（移动超过 5pt 即触发）。
     private var editDragGesture: some Gesture {
         DragGesture(minimumDistance: config.isEditing ? 5 : 1000, coordinateSpace: .global)
             .onChanged { value in
-                guard config.isEditing, !didLongPress else { return }
+                guard config.isEditing else { return }
                 dragOffset = value.translation
                 config.onDragChanged?(value.location)
             }
             .onEnded { _ in
-                guard config.isEditing, !didLongPress else { return }
+                guard config.isEditing else { return }
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
                     dragOffset = .zero
                 }
