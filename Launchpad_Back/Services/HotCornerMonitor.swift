@@ -48,7 +48,8 @@ final class HotCornerMonitor {
 
     /// 角落判定阈值（像素）。鼠标距角落顶点小于此值即视为位于该角落。
     /// 多屏/高分屏下顶点判定容易因 1~2px 抖动而漏检，留出容差。
-    private let cornerTolerance: CGFloat = 4.0
+    /// 4pt 太严几乎无法命中，放宽到 10pt 让用户容易触发。
+    private let cornerTolerance: CGFloat = 10.0
 
     /// 停留触发时长（秒）。鼠标在角落保持不动达到此时长后才触发。
     private let dwellDuration: TimeInterval = 0.3

@@ -163,12 +163,20 @@ final class ThreeFingerDragCoordinator {
     // MARK: - 坐标转换
 
     /// 将 NSEvent.mouseLocation（全局屏幕坐标）转换为 SwiftUI `.global` 坐标空间。
-    /// 失败（无窗口）时返回 nil。
+    ///
+    /// 关键：currentGridLayout / DragGesture(.global) / .position() 用的都是
+    /// "SwiftUI 局部坐标"——原点在窗口左上角，y 向下。
+    /// 而 NSWindow.convertPoint(fromScreen:) 返回的是 AppKit 窗口坐标——原点左下，y 向上。
+    /// 两者 y 轴方向相反，会导致三指拖动行号算反（第一行变最后一行）、浮动图标位置镜像。
+    ///
+    /// 正确做法：以窗口左上角为原点，y 向下，把屏幕坐标转成相对窗口左上角的偏移。
     private func convertToSwiftUIGlobal(_ screenLocation: CGPoint) -> CGPoint? {
         guard let window = window else { return nil }
-        // convertPoint(fromScreen:) 将屏幕坐标转换为窗口坐标；
-        // macOS 上窗口坐标 == SwiftUI .global 坐标空间（原点窗口左下角，y 向上）。
-        // 两种窗口模式均用 .fullSizeContentView，内容铺满窗口，故窗口坐标即 SwiftUI 全局坐标。
-        return window.convertPoint(fromScreen: screenLocation)
+        // 1. 屏幕坐标 → AppKit 窗口坐标（原点左下，y 向上）
+        let winPoint = window.convertPoint(fromScreen: screenLocation)
+        // 2. AppKit 窗口坐标(左下原点,y向上) → SwiftUI 局部坐标(左上原点,y向下)
+        //    y 翻转：swiftY = windowHeight - appKitY
+        let swiftY = window.frame.height - winPoint.y
+        return CGPoint(x: winPoint.x, y: swiftY)
     }
 }
