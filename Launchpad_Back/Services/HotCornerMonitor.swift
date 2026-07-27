@@ -153,8 +153,11 @@ final class HotCornerMonitor {
 
         if activeCorner == currentCorner {
             // 仍在同一角落：累加停留时间
+            // 注意：activeCorner 和 currentCorner 可能同时为 nil（nil==nil 成立），
+            // 此时不应触发 evaluateTrigger，必须 guard let 安全解包，避免强制解包崩溃。
+            guard let corner = activeCorner else { return }
             updateDwell { [weak self] in
-                self?.evaluateTrigger(corner: activeCorner!)
+                self?.evaluateTrigger(corner: corner)
             }
         } else {
             // 切换到新角落（或离开）：重置停留计时
