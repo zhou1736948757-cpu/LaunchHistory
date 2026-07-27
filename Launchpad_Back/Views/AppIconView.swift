@@ -316,8 +316,9 @@ struct AppIconView: View {
     /// `AppUninstallerService.moveToTrash` + `removeAppFromLaunchpad`。
     var onUninstall: ((AppItem) -> Void)?
 
-    // 內建 sheet/alert 狀態：若上層未提供 onRename/onUninstall，
-    // AppIconView 自身仍可直接彈 sheet/alert 完成操作（見 defaultRename/defaultUninstall）。
+    // 內建 sheet/alert 狀態：onRename/onUninstall 為可選注入。
+    // 上層（如 PageViewEditable/VerticalScrollView）可不傳，nil 時走內建
+    // sheet/alert + @EnvironmentObject launchpadVM，重命名/卸載已可獨立工作。
     @State private var isPresentingRename = false
     @State private var isPresentingUninstallConfirm = false
     /// 卸載失敗時的錯誤訊息（用於錯誤 alert）。
@@ -476,7 +477,6 @@ struct AppIconView: View {
     /// 內建卸載實作：移到廢紙簍 -> 成功移除 -> 失敗提示錯誤（不移除）。
     private func defaultUninstall() {
         let appURL = URL(fileURLWithPath: app.path)
-        let app = self.app
         uninstallerService.moveToTrash(appURL: appURL) { result in
             switch result {
             case .success:
