@@ -307,8 +307,9 @@ struct GeneralSettingsView: View {
             return
         }
 
-        // 留一点时间让 open 进程把新实例拉起，再终止当前实例
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+        // 留时间让 open -n 把新实例拉起，再终止当前实例
+        // 0.3s：比 0.1s 更稳，避免新实例启动慢时出现无窗口间隙
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
             NSApp.terminate(nil)
         }
     }
