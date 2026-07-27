@@ -14,6 +14,7 @@ extension Notification.Name {
     static let windowModeChanged = Notification.Name("windowModeChanged")
     static let gesturesChanged = Notification.Name("gesturesChanged")
     static let layoutSettingsChanged = Notification.Name("layoutSettingsChanged")
+    static let mainWindowDidActivate = Notification.Name("mainWindowDidActivate")
 }
 
 @main
@@ -77,6 +78,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NotificationCenter.default.addObserver(self, selector: #selector(showSettingsWindow),      name: .openSettingsRequested, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(reconfigureMainWindow),   name: .windowModeChanged,      object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(rebuildGestureRecognizers), name: .gesturesChanged,       object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(handleMainWindowActivated), name: .mainWindowDidActivate,  object: nil)
     }
 
     /// 检查并请求辅助功能权限（手势全局监听需要）
@@ -100,6 +102,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         setupMultitouchPinch()
         Logger.info("Gesture recognizers rebuilt")
+    }
+
+    /// 主窗口激活时关闭设置面板
+    @objc func handleMainWindowActivated() {
+        if let sw = settingsWindow {
+            sw.close()
+            settingsWindow = nil
+            Logger.info("Settings window closed due to main window activation")
+        }
     }
 
     /// 打开设置面板（全局唯一）
@@ -194,6 +205,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             Logger.info("Main window closed")
         }
     }
+
+    /// 主窗口成为 key window 时关闭设置面板
+    /// 解决：打开设置面板→点击 Launch 面板→ESC 退出 Launch 后设置面板残留
+    func windowDidBecomeKey(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow,
+              window === mainWindow else { return }
+        if let sw = settingsWindow {
+            sw.close()
+            settingsWindow = nil
+            Logger.info("Settings window closed: main window became key")
+        }
+    }
     
     func hideMainWindow() {
         guard let window = mainWindow else {
@@ -245,7 +268,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSRunningApplication.current.activate(options: [.activateAllWindows])
         window.orderFrontRegardless()
         window.makeKeyAndOrderFront(nil)
-        
+        // borderless 全屏窗口有时首次 makeKey 不生效（key=false），
+        // 延迟重试一次确保成为 key window，否则点击/键盘事件分发异常。
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+            guard let self, let w = self.mainWindow, !w.isKeyWindow else { return }
+            NSApplication.shared.activate(ignoringOtherApps: true)
+            w.makeKeyAndOrderFront(nil)
+            Logger.info("Re-attempted makeKey for main window")
+        }
+
         logWindowState(window, context: "show")
         Logger.info("Window shown")
     }
