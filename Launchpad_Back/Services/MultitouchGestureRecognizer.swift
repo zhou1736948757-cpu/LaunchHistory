@@ -163,13 +163,13 @@ final class MultitouchGestureRecognizer {
     /// 三指拖动判定所需手指数（恰好 3 指）
     private let threeFingerCount = 3
     /// 三指平移开始前的最小质心位移阈值（归一化坐标，0–1）
-    /// 0.012 ≈ 触控板短边的 1.2%，避免轻微抖动误触
-    private let threeFingerMinTranslation: Double = 0.012
+    /// 降至 0.005：减少触发延迟，手指稍微移动即可识别
+    private let threeFingerMinTranslation: Double = 0.005
     /// 捏合容差：质心到各指平均距离的相对变化超过此值视为捏合（忽略，让四指处理）
-    private let threeFingerPinchTolerance: Double = 0.10
-    /// 连续帧确认阈值：连续 N 帧满足"平移且非捏合"才正式触发 began，
-    /// 防止单帧噪声/捏合初期被误判为拖动
-    private let threeFingerConfirmFrames: Int = 3
+    /// 放宽至 0.15：允许三指拖动时有更大的自然扩散
+    private let threeFingerPinchTolerance: Double = 0.15
+    /// 连续帧确认阈值：降至 2 帧，提升响应速度（原来 3 帧约 24ms，2 帧约 16ms）
+    private let threeFingerConfirmFrames: Int = 2
 
     /// 三指拖动追踪状态
     private var threeFingerTracking = false       // 是否已对外发出 began

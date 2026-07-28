@@ -67,6 +67,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var settingsWindow: NSWindow?
     private var swipeGestureRecognizer: SwipeGestureRecognizer?
     private var multitouchStarted = false
+    /// AppKit 浮动图标层（三指拖动专用，绕过 SwiftUI 渲染管线）
+    let floatingIconOverlay = FloatingIconOverlayController()
     private let hotCornerMonitor = HotCornerMonitor()
     /// 三指拖动协调器：仅面板显示时启用。
     private let threeFingerDragCoordinator = ThreeFingerDragCoordinator()
@@ -350,6 +352,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         logWindowState(window, context: "show")
         Logger.info("Window shown")
+
+        // 安装 AppKit 浮动图标层（三指拖动绕过 SwiftUI 渲染管线用，首次显示时安装）
+        FloatingIconOverlayController.shared.install(in: window)
     }
     
     func toggleMainWindowVisibility() {

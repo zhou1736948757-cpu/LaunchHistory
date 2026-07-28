@@ -344,7 +344,8 @@ struct LaunchpadView: View {
                 }
                 
                 // 浮動拖曳的 icon（跟著滑鼠）
-                if let item = floatingDragState.item {
+                // 三指拖动时 AppKit overlay 负责视觉，不显示 SwiftUI 版本（避免高频重渲染）
+                if let item = floatingDragState.item, !threeFingerDragActive {
                     floatingDragOverlay(item: item, location: floatingDragState.location, in: geometry)
                 }
             }
@@ -847,6 +848,7 @@ struct LaunchpadView: View {
         if floatingDragState.item != nil {
             handleFloatingDrop()
             floatingDragState.clear()
+            FloatingIconOverlayController.shared.end()
         }
 
         // 文件夹展开时：优先在文件夹内反查图标，命中则走"拖出文件夹"逻辑
@@ -854,23 +856,25 @@ struct LaunchpadView: View {
            let (app, _) = findFolderItemAtScreenLocation(at: mouseLocation, in: folder) {
             floatingDragState.item = .app(app)
             floatingDragState.draggingItemId = app.id
-            floatingDragState.startedInGrid = false  // 来自文件夹，非主网格
-            floatingDragState.location = mouseLocation
+            floatingDragState.startedInGrid = false
+            // 不设 floatingDragState.location（由 AppKit overlay 处理视觉位置）
             threeFingerDragActive = true
 
-            // 移出文件夹 + 进编辑模式 + 立即收起文件夹露出网格
             launchpadVM.removeAppFromFolder(app: app, folder: folder, placement: .floatingDrag)
             editModeManager.enterEditMode()
             withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
                 expandedFolder = nil
             }
+
+            // 启动 AppKit 浮动图标层（不走 SwiftUI 重渲染）
+            let icon = AppIconCache.shared.cachedIcon(for: app.path)
+                ?? NSWorkspace.shared.icon(forFile: app.path)
+            FloatingIconOverlayController.shared.begin(icon: icon, appName: app.displayName, at: mouseLocation)
             Logger.info("ThreeFingerDrag: 从文件夹拖出 \(app.name)")
             return
         }
 
         guard let item = findItemAtScreenLocation(at: mouseLocation) else {
-            // 指针不在任何图标上：仍标记为活跃，但 draggingItem 为空，
-            // 这样 change 期间若鼠标滑入图标区也不会误起拖动（需要 begin 时命中）
             threeFingerDragActive = true
             Logger.debug("ThreeFingerDrag: begin 但指针下无图标，进入待命状态")
             return
@@ -879,39 +883,56 @@ struct LaunchpadView: View {
         floatingDragState.item = item
         floatingDragState.draggingItemId = item.id
         floatingDragState.startedInGrid = true
-        floatingDragState.location = mouseLocation
+        // 不设 floatingDragState.location（由 AppKit overlay 处理视觉位置）
         threeFingerDragActive = true
 
-        // 初始落点目标（用复用逻辑）
         let dropResult = findDropTargetByScreenLocation(at: mouseLocation,
                                                         excludingId: item.id,
                                                         size: lastGeometrySize)
         floatingDragState.dropTargetId = dropResult.targetId
         floatingDragState.dropTargetIndex = dropResult.targetIndex
 
-        Logger.info("ThreeFingerDrag: 选中 \(item.name) 作为拖动源 @ global=\(mouseLocation)")
+        // 启动 AppKit 浮动图标层（不走 SwiftUI 重渲染）
+        if case .app(let app) = item {
+            // 优先用已缓存的高分辨率图标；若缓存未命中（首次拖动）则同步从 NSWorkspace 加载真实图标
+            let icon = AppIconCache.shared.cachedIcon(for: app.path)
+                ?? NSWorkspace.shared.icon(forFile: app.path)
+            FloatingIconOverlayController.shared.begin(icon: icon, appName: app.displayName, at: mouseLocation)
+        }
+        Logger.info("ThreeFingerDrag: 选中 \(item.name) 作为拖动源")
     }
 
-    /// 三指拖动位置更新：复用 onDragChanged 的落点计算逻辑。
+    /// 三指拖动位置更新（高频，125-250Hz）：
+    /// 【性能优化】location 更新完全绕过 SwiftUI，直接调 AppKit CALayer.position。
+    /// 不再写 floatingDragState.location（避免触发父视图重渲染）。
+    /// 只在落点真正变化时才更新 floatingDragState.dropTargetId/Index（低频）。
     private func updateThreeFingerDrag(to mouseLocation: CGPoint) {
         guard threeFingerDragActive, let item = floatingDragState.item else { return }
 
-        floatingDragState.location = mouseLocation
+        // 【核心优化】只更新 panel 位置，不触发任何 SwiftUI @State 变化
+        FloatingIconOverlayController.shared.updateLocation(mouseLocation)
 
         // 边缘换页（仅水平分页模式）
         _ = checkEdgeForPageChange(screenLocation: mouseLocation, screenWidth: lastGeometrySize.width)
 
+        // 落点计算：只在结果真正变化时才更新 floatingDragState（触发父视图重渲染）
         let result = findDropTargetByScreenLocation(at: mouseLocation,
                                                     excludingId: item.id,
                                                     size: lastGeometrySize)
-        floatingDragState.dropTargetId = result.targetId
-        floatingDragState.dropTargetIndex = result.targetIndex
+        if result.targetId != floatingDragState.dropTargetId ||
+           result.targetIndex != floatingDragState.dropTargetIndex {
+            floatingDragState.dropTargetId = result.targetId
+            floatingDragState.dropTargetIndex = result.targetIndex
+        }
     }
 
-    /// 三指拖动结束：直接 drop（不进编辑模式）。
+    /// 三指拖动结束：直接 drop（不进编辑模式），关闭 AppKit overlay。
     private func endThreeFingerDrag() {
         guard threeFingerDragActive else { return }
         threeFingerDragActive = false
+
+        // 关闭 AppKit 浮动图标层
+        FloatingIconOverlayController.shared.end()
 
         if floatingDragState.item != nil {
             handleFloatingDrop()
