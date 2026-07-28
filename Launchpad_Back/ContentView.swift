@@ -97,6 +97,8 @@ struct LaunchpadView: View {
     /// 最近一次 GeometryReader 报告的尺寸。三指拖动通知处理器在视图树外触发，
     /// 拿不到 GeometryProxy，用此缓存计算 currentGridLayout / 边缘换页 / 落点目标。
     @State private var lastGeometrySize: CGSize = .zero
+    /// 落点计算节流时间戳（30ms 节流，避免 125-250Hz 全频遍历）
+    @State private var lastDropTargetCheckTime: TimeInterval = 0
 
     private var filteredItems: [LaunchpadDisplayItem] {
         launchpadVM.filteredDisplayItems(matching: searchVM.searchText)
@@ -342,7 +344,12 @@ struct LaunchpadView: View {
                     )
                     .transition(.opacity.combined(with: .scale(scale: 0.9)))
                 }
-                
+
+                // 蓝色插入指示器（独立渲染，三指拖动和长按拖动都显示）
+                if floatingDragState.item != nil && floatingDragState.dropTargetIndex >= 0 {
+                    screenLocationDropIndicator(at: floatingDragState.dropTargetIndex, in: geometry)
+                }
+
                 // 浮動拖曳的 icon（跟著滑鼠）
                 // 三指拖动时 AppKit overlay 负责视觉，不显示 SwiftUI 版本（避免高频重渲染）
                 if let item = floatingDragState.item, !threeFingerDragActive {
@@ -512,11 +519,6 @@ struct LaunchpadView: View {
     @ViewBuilder
     private func floatingDragOverlay(item: LaunchpadDisplayItem, location: CGPoint, in geometry: GeometryProxy) -> some View {
         ZStack {
-            // 顯示放置指示器（藍色）
-            if floatingDragState.dropTargetIndex >= 0 && floatingDragState.dropTargetId == nil {
-                screenLocationDropIndicator(at: floatingDragState.dropTargetIndex, in: geometry)
-            }
-            
             // 跟隨滑鼠的圖標
             VStack(spacing: 4) {
                 switch item {
@@ -903,9 +905,9 @@ struct LaunchpadView: View {
     }
 
     /// 三指拖动位置更新（高频，125-250Hz）：
-    /// 【性能优化】location 更新完全绕过 SwiftUI，直接调 AppKit CALayer.position。
+    /// 【性能优化】location 更新完全绕过 SwiftUI，直接调 AppKit NSPanel.setFrameOrigin()。
     /// 不再写 floatingDragState.location（避免触发父视图重渲染）。
-    /// 只在落点真正变化时才更新 floatingDragState.dropTargetId/Index（低频）。
+    /// 落点计算加时间节流（30ms），避免 125-250Hz 全频遍历网格。
     private func updateThreeFingerDrag(to mouseLocation: CGPoint) {
         guard threeFingerDragActive, let item = floatingDragState.item else { return }
 
@@ -915,7 +917,11 @@ struct LaunchpadView: View {
         // 边缘换页（仅水平分页模式）
         _ = checkEdgeForPageChange(screenLocation: mouseLocation, screenWidth: lastGeometrySize.width)
 
-        // 落点计算：只在结果真正变化时才更新 floatingDragState（触发父视图重渲染）
+        // 落点计算：时间节流，每 30ms 算一次（约 33Hz，足够流畅），避免 125-250Hz 全频遍历
+        let now = CACurrentMediaTime()
+        guard now - lastDropTargetCheckTime >= 0.030 else { return }
+        lastDropTargetCheckTime = now
+
         let result = findDropTargetByScreenLocation(at: mouseLocation,
                                                     excludingId: item.id,
                                                     size: lastGeometrySize)

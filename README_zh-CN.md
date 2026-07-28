@@ -1,162 +1,155 @@
-# Launchpad_Back
+# LaunchHistory
 
-> 用 SwiftUI + AppKit 写的 macOS Launchpad 替代启动器（macOS 15.6+）。
+> 高性能原生 Launchpad 替代品，适配 macOS 15+，基于 SwiftUI + AppKit 构建。
+
+**[English](./README.md) | [繁體中文](./README_zh-TW.md) | [简体中文](./README_zh-CN.md)**
 
 <div align="center">
-  <img src="https://img.shields.io/github/downloads/EricYang801/Launchpad_Back/total?style=for-the-badge&color=blue" alt="下载次数" />
+  <img src="./Example.png" alt="LaunchHistory 界面" width="800"/>
 </div>
 
-**[English](./README.md) | [繁体中文](./README_zh-TW.md) | [简体中文](./README_zh-CN.md)**
+## ✨ 功能特性
 
-如果你在找“macOS Tahoe 的 Launchpad 替代品”，这个项目就是为这个场景做的：全局快捷键呼出、分页网格、文件夹整理、拖拽排序和本地搜索。
+### 核心功能
+- **四指捏合** 打开/关闭启动器（通过 MultitouchSupport 框架实现系统级手势识别）
+- **⌘+L 全局热键** 随时唤醒
+- **触发角** 激活支持
+- **三指拖动** 重新排列应用或创建文件夹（AppKit NSPanel 覆盖层，CPU 平均占用 15.6%）
+- **长按 0.2 秒** 进入编辑模式（图标抖动动画）
+- **搜索** 实时过滤应用名称、Bundle ID 或路径
+- **文件夹** 支持拖动创建、展开/收起、拖出
+- **自定义应用来源** 不限于 /Applications（可配置路径）
 
-## 界面演示
-![主界面](./Example.png)
+### 界面与体验
+- **水平分页** 或 **垂直滚动** 布局模式
+- **背景模糊** 可调节透明度
+- **蓝色插入指示器** 拖动时显示精确落点位置
+- **应用隐藏** 从启动器隐藏（不卸载）
+- **自定义重命名** 任意应用
+- **多语言** 支持（English、简体中文、繁體中文）跟随系统语言
 
-## 搜索关键词
+### 性能表现
+- **CPU 占用**：空闲 0.1%，三指拖动时约 15%（从 23.6% 优化）
+- **内存占用**：160-190MB 稳定
+- **AppKit NSPanel** 拖动覆盖层（绕过 SwiftUI 重渲染）
+- **30ms 节流** 落点计算（从 125-250Hz 降至约 33Hz）
+- **图标缓存** 异步加载 + NSWorkspace 兜底
 
-Launchpad 替代, macOS app launcher, SwiftUI 启动器, AppKit launcher, 全局快捷键启动器, macOS Tahoe Launchpad replacement, Homebrew Cask 扫描
+## 🎯 项目背景
 
-## 当前功能（按现有代码）
+macOS 15 (Sequoia/Tahoe) 移除了部分 Launchpad 自定义选项。本项目恢复完整控制：
+- 基于手势的激活方式，无需依赖 Dock
+- 原生性能（非 Electron/Web 包装）
+- 完整拖放排序 + 视觉反馈
+- 可扩展的文件夹系统
 
-- 浮动窗口启动器，可通过全局 `Cmd + L` 切换显示
-- 响应式分页网格（动态 5-9 列、3-7 行）
-- 支持拖拽排序、文件夹创建/重命名、从展开文件夹拖出 App
-- 搜索会匹配 App 名称、bundle ID、安装路径（不区分大小写）
-- 扫描系统、用户和 Homebrew 常见安装目录
-- 图标处理包含 workspace icon、metadata fallback 和自动 fallback icon
+## 📦 安装
 
-## 快捷键与手势
+### 方式 1：从源码构建
 
-| 输入 | 行为 |
-| --- | --- |
-| `Cmd + L` | 全局切换启动器显示/隐藏 |
-| `Cmd + W` | 隐藏窗口 |
-| `Cmd + Q` | 退出程序 |
-| `Esc` | 依次：退出编辑模式 -> 关闭文件夹 -> 清空搜索 -> 隐藏窗口 |
-| `Left` / `Up` | 上一页 |
-| `Right` / `Down` | 下一页 |
-| 触控板滚动手势 | 按阈值和冷却时间切页 |
-| 鼠标滚轮 | 按 notch 累积和防抖切页 |
-
-## 应用扫描路径
-
-| 路径 | 是否递归 |
-| --- | --- |
-| `/System/Applications` | 否 |
-| `/System/Applications/Utilities` | 否 |
-| `/Applications` | 否 |
-| `/Applications/Utilities` | 否 |
-| `~/Applications` | 否 |
-| `/opt/homebrew/Caskroom` | 是 |
-
-扫描器还会过滤一批隐藏/后台系统 App，并使用稳定标识去重（优先 `bundleID`，没有时回退到路径）。
-
-## 文件夹与版面逻辑
-
-- 长按图标进入编辑模式
-- 把 App 拖到另一个 App 上可创建文件夹（默认名 `New Folder`）
-- 把 App 拖到文件夹上可加入文件夹
-- 展开文件夹后可重命名、可重排内部项目
-- 从展开文件夹拖出 App 可移出文件夹
-- 当文件夹只剩 1 个 App 时会自动解散
-- 重设版面会清空自定义排序和文件夹，恢复按名称排序
-
-## 图标处理流程
-
-- 先解析 symlink / canonical bundle path
-- 如果 `NSWorkspace` 返回的不是 generic icon，直接使用
-- 如果是 generic icon，则继续读取 bundle metadata（`CFBundleIconFile`、`CFBundleIconName` 等）
-- metadata 仍然不可用时，生成一致的 initials fallback icon
-- 使用异步缓存并预加载相邻页图标，减少翻页和拖拽卡顿
-
-## 持久化存储
-
-Launchpad_Back 会把版面状态写入 `UserDefaults`：
-
-- `launchpad_item_order`
-- `launchpad_folders`
-
-## 项目结构
-
-```text
-Launchpad_Back/
-├── Launchpad_BackApp.swift
-├── ContentView.swift
-├── Models/
-│   └── AppItem.swift
-├── Services/
-│   ├── AppIconCache.swift
-│   ├── AppIconResolver.swift
-│   ├── AppLauncherService.swift
-│   ├── AppScannerService.swift
-│   ├── GestureManager.swift
-│   ├── GridLayoutManager.swift
-│   ├── KeyboardEventManager.swift
-│   └── Logger.swift
-├── ViewModels/
-│   ├── EditModeManager.swift
-│   ├── LaunchpadViewModel.swift
-│   ├── PaginationViewModel.swift
-│   └── SearchViewModel.swift
-├── Views/
-│   ├── AppIconView.swift
-│   ├── BackgroundView.swift
-│   ├── FolderExpandedView.swift
-│   ├── PageIndicatorView.swift
-│   └── SearchBarView.swift
-└── Assets.xcassets/
-```
-
-## 系统要求
-
-- macOS 15.6 或更高版本
-- Xcode 26.0 或更高版本
-
-## 编译
-
-1. 克隆仓库：
-
-   ```bash
-   git clone https://github.com/EricYang801/Launchpad_Back.git
-   cd Launchpad_Back
-   ```
-
-2. 用 Xcode 打开：
-
-   ```bash
-   open Launchpad_Back.xcodeproj
-   ```
-
-3. 运行：
-
-- 选择 `My Mac`
-- 按 `Cmd + R`
-
-也可以在 Terminal 编译：
+**要求**：Xcode 16+、macOS 15+
 
 ```bash
-xcodebuild build -scheme Launchpad_Back -destination 'platform=macOS'
+git clone https://github.com/EricYang801/Launchpad_Back.git
+cd Launchpad_Back
+open Launchpad_Back.xcodeproj
 ```
 
-## 测试
+按 `⌘+R` 运行，或使用命令行：
+
+```bash
+xcodebuild -project Launchpad_Back.xcodeproj -scheme Launchpad_Back -configuration Release build
+```
+
+### 方式 2：下载发布版本（即将推出）
+
+预编译的 `.app` 包将发布在 [Releases](../../releases) 页面。
+
+## 🚀 使用方法
+
+1. **启动** 应用 — 运行在菜单栏
+2. **打开启动器**：
+   - 按 `⌘+L`（全局热键）
+   - 触控板四指捏合
+   - 将光标移至配置的触发角
+3. **重新排列应用**：
+   - **长按** 任意图标 0.2 秒 → 抖动模式 → 拖动到新位置
+   - **三指拖动** 直接拖动任意图标（无需长按）
+4. **创建文件夹**：将一个应用拖到另一个应用上
+5. **搜索**：启动器打开时直接输入
+6. **设置**：点击右上角齿轮图标
+
+## ⚙️ 配置
+
+通过启动器中的齿轮图标访问设置：
+
+- **布局模式**：水平分页 / 垂直滚动
+- **背景模糊**：调节透明度（0-100%）
+- **搜索栏**：显示/隐藏
+- **触发角**：选择激活角落
+- **应用来源**：添加 `/Applications` 以外的自定义目录
+- **隐藏应用**：管理可见性
+- **语言**：自动检测系统语言
+
+## 🛠️ 架构
+
+- **SwiftUI** 主界面（网格布局、文件夹视图、设置）
+- **AppKit** 用于：
+  - 全局热键（`CGEventTap`）
+  - 浮动拖动覆盖层（`NSPanel` 在 `.screenSaver` 层级）
+  - 触发角监控（`NSEvent.addGlobalMonitorForEvents`）
+- **MultitouchSupport.framework**（私有框架）用于四指捏合和三指拖动检测
+- **UserDefaults** 持久化存储（应用顺序、文件夹、隐藏应用、设置）
+
+### 关键性能优化
+1. **NSPanel 覆盖层**：拖动图标在独立窗口渲染，绕过 SwiftUI body 重计算（125-250Hz → 0Hz 主视图更新）
+2. **落点节流**：30ms 间隔（250Hz → 33Hz 计算频率）
+3. **图标缓存**：共享 `AppIconCache` 异步加载，`NSWorkspace.icon(forFile:)` 兜底
+4. **手势协调器**：直接回调 SwiftUI state，无轮询
+
+## 🧪 测试
 
 运行单元测试：
 
 ```bash
-xcodebuild test -scheme Launchpad_Back -destination 'platform=macOS' -only-testing:Launchpad_BackTests
+xcodebuild test -scheme Launchpad_Back -destination 'platform=macOS'
 ```
 
-当前测试覆盖：
+测试覆盖：
+- 图标解析（直接路径、符号链接、元数据、兜底）
+- 图标缓存（规范路径、并发请求、去重）
+- 文件夹 CRUD 操作和顺序持久化
+- 搜索匹配（名称、Bundle ID、路径）
+- 分页边界和切片
+- 布局重置行为
 
-- icon 解析（直接路径、symlink、metadata fallback、自动 fallback）
-- icon cache（canonical path 复用、并发安全、in-flight async 合并）
-- 文件夹创建/加入/移除/删除与排序恢复
-- 重设版面行为
-- 搜索匹配（名称、bundle ID、路径）
-- 分页切片、边界检查和页码修正
-- `SearchViewModel` 基础行为
+## 📝 路线图
 
-## 许可证
+- [ ] 从启动器卸载应用（移至废纸篓）
+- [ ] 可自定义网格大小（行 × 列）
+- [ ] iCloud 同步布局/文件夹
+- [ ] 嵌套文件夹（目前单层）
+- [ ] 键盘导航（方向键）
 
-本项目采用 GPL-3.0。详见 [LICENSE](./LICENSE)。
+## 🤝 贡献
+
+欢迎贡献！请：
+1. Fork 本仓库
+2. 创建功能分支（`git checkout -b feature/amazing-feature`）
+3. 提交更改（`git commit -m 'Add amazing feature'`）
+4. 推送到分支（`git push origin feature/amazing-feature`）
+5. 打开 Pull Request
+
+## 📄 许可证
+
+GPL-3.0 许可证。详见 [LICENSE](./LICENSE)。
+
+## 🙏 致谢
+
+- **MultitouchSupport.framework** 逆向工程社区
+- **macOS 手势** 灵感来自 iOS/iPadOS SpringBoard
+- **AppKit + SwiftUI** 混合架构实现高性能
+
+---
+
+**关键词**：Launchpad 替代品、macOS 启动器、SwiftUI AppKit、四指手势、三指拖动、macOS 15 启动器、Sequoia 替代方案

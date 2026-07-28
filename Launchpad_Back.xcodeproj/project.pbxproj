@@ -414,7 +414,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
-				MARKETING_VERSION = 0.4;
+				MARKETING_VERSION = 0.5.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.Eric-Yang.Launchpad-Back";
 				PRODUCT_NAME = "LaunchHistory";
 				INFOPLIST_KEY_CFBundleDisplayName = "LaunchHistory";
@@ -451,7 +451,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
-				MARKETING_VERSION = 0.4;
+				MARKETING_VERSION = 0.5.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.Eric-Yang.Launchpad-Back";
 				PRODUCT_NAME = "LaunchHistory";
 				INFOPLIST_KEY_CFBundleDisplayName = "LaunchHistory";
