@@ -220,7 +220,6 @@ struct UserPreferences: Codable {
     var autoLaunchAtLogin: Bool
     var checkForUpdates: Bool
     var sendAnonymousData: Bool
-    var debugModeEnabled: Bool
 
     /// 默认配置
     static let `default` = UserPreferences(
@@ -279,8 +278,7 @@ struct UserPreferences: Codable {
         // 高级设置
         autoLaunchAtLogin: false,
         checkForUpdates: true,
-        sendAnonymousData: false,
-        debugModeEnabled: false
+        sendAnonymousData: false
     )
 }
 

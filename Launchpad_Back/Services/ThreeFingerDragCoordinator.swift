@@ -63,6 +63,7 @@ final class ThreeFingerDragCoordinator {
     }
 
     /// 设置是否启用（面板显示/隐藏时由 AppDelegate 调用）。
+    /// 隐藏时发送 .cancel 事件（而不是 .end）—避免执行 drop 逻辑把图标"放到"隐藏的面板网格中。
     func setEnabled(_ enabled: Bool) {
         lock.lock()
         let wasDragging = self.isDragging
@@ -72,16 +73,23 @@ final class ThreeFingerDragCoordinator {
         }
         lock.unlock()
 
-        // 面板隐藏时若仍在拖动，补发一次 end 通知，避免状态悬挂
+        // 面板隐藏时若仍在拖动，补发 cancel 通知，仅清理状态不执行 drop
         if wasDragging && !enabled {
-            Logger.info("ThreeFingerDrag: disabled while dragging, emitting end")
-            postEvent(.end)
+            Logger.info("ThreeFingerDrag: disabled while dragging, emitting cancel")
+            postEvent(.cancel)
         }
     }
 
     // MARK: - 事件处理
 
     private func handle(event: ThreeFingerDragEvent) {
+        // 入口处统一拦截：必须 enabled 且 window 实际可见（orderOut 后 window 仍存在但不可见）
+        lock.lock()
+        let currentEnabled = enabled
+        let windowVisible = window?.isVisible ?? false
+        lock.unlock()
+        Logger.info("⦿ [DIAG] handle event=\(event) enabled=\(currentEnabled) windowVisible=\(windowVisible)")
+        guard currentEnabled, windowVisible else { return }
         switch event {
         case .began:
             beginDrag()

@@ -64,6 +64,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let globalHotKeyID: UInt32 = 1
 
     private var mainWindow: NSWindow?
+
+    /// 主面板当前是否实际可见（用于 ContentView 三指拖动防御性检查）
+    var isMainWindowVisible: Bool {
+        mainWindow?.isVisible ?? false
+    }
     private var settingsWindow: NSWindow?
     private var swipeGestureRecognizer: SwipeGestureRecognizer?
     private var multitouchStarted = false

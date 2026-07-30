@@ -21,6 +21,8 @@ enum ThreeFingerDragUIEvent {
     case change(mouseLocation: CGPoint)
     /// 拖动结束：调 handleFloatingDrop 并清理状态（不进编辑模式）。
     case end
+    /// 拖动取消：面板隐藏或失焦时触发，仅清理状态不执行 drop。
+    case cancel
 }
 
 extension Notification.Name {

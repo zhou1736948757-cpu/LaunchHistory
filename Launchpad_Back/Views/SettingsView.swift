@@ -130,7 +130,6 @@ struct GeneralSettingsView: View {
             Section("section_advanced") {
                 Toggle("auto_launch_at_login", isOn: binding(\.autoLaunchAtLogin))
                 Toggle("check_for_updates",     isOn: binding(\.checkForUpdates))
-                Toggle("debug_mode",     isOn: binding(\.debugModeEnabled))
             }
 
             Section("section_language") {

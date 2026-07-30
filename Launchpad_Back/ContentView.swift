@@ -840,12 +840,29 @@ struct LaunchpadView: View {
             updateThreeFingerDrag(to: mouseLocation)
         case .end:
             endThreeFingerDrag()
+        case .cancel:
+            cancelThreeFingerDrag()
         }
+    }
+
+    /// 取消三指拖动（不执行 drop，仅清理状态和 overlay）
+    private func cancelThreeFingerDrag() {
+        threeFingerDragActive = false
+        FloatingIconOverlayController.shared.end()
+        // 不调用 handleFloatingDrop（避免隐藏面板时还执行 drop 逻辑）
+        floatingDragState.clear()
+        Logger.info("ThreeFingerDrag: cancelled (no drop)")
     }
 
     /// 三指拖动开始：用鼠标位置反查指针下图标，设为 draggingItem。
     /// 不进编辑模式（区别于长按拖动）。
     private func beginThreeFingerDrag(at mouseLocation: CGPoint) {
+        // 防御：主面板未实际可见时拒绝 begin（orderOut 后 window 仍存在但不可见）
+        if let appDelegate = NSApp.delegate as? AppDelegate,
+           !appDelegate.isMainWindowVisible {
+            Logger.warning("ThreeFingerDrag: begin 拒绝（主面板未可见），mouse=\(mouseLocation)")
+            return
+        }
         // 若已有正在进行的拖动（编辑模式或上次三指拖动未清理），先收尾
         if floatingDragState.item != nil {
             handleFloatingDrop()
@@ -1054,9 +1071,15 @@ struct LaunchpadView: View {
     }
     
     private func hideWindow() {
+        // 统一走 AppDelegate.hideMainWindow()（包含三指禁用 + overlay 清理）
+        // 即使 AppDelegate cast 失败，也确保清理 overlay + setEnabled
+        FloatingIconOverlayController.shared.end()
         if let appDelegate = NSApp.delegate as? AppDelegate {
             appDelegate.hideMainWindow()
         } else {
+            // 兜底：直接 orderOut 同时禁用手势
+            threeFingerDragActive = false
+            floatingDragState.clear()
             NSApplication.shared.keyWindow?.orderOut(nil)
         }
     }
