@@ -60,6 +60,14 @@ struct ContentView: View {
                 paginationVM.invalidateLayout()
                 layoutVersion += 1
             }
+            .onReceive(NotificationCenter.default.publisher(for: .appListRefreshRequested)) { _ in
+                // 面板每次显示时刷新应用列表（新下载的 app 无需重启即可出现）
+                launchpadVM.loadInstalledApps()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSWorkspace.didLaunchApplicationNotification)) { _ in
+                // 有新 app 启动（含新安装后首次运行）时刷新列表
+                launchpadVM.loadInstalledApps()
+            }
     }
 }
 

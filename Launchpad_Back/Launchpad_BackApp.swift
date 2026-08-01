@@ -15,6 +15,8 @@ extension Notification.Name {
     static let gesturesChanged = Notification.Name("gesturesChanged")
     static let layoutSettingsChanged = Notification.Name("layoutSettingsChanged")
     static let mainWindowDidActivate = Notification.Name("mainWindowDidActivate")
+    /// 面板每次显示时广播，通知 ContentView 重新扫描应用列表（解决新下载 app 不显示）
+    static let appListRefreshRequested = Notification.Name("appListRefreshRequested")
 }
 
 @main
@@ -359,6 +361,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         // 安装 AppKit 浮动图标层（三指拖动绕过 SwiftUI 渲染管线用，首次显示时安装）
         FloatingIconOverlayController.shared.install(in: window)
+
+        // 面板显示时广播刷新通知：让 ContentView 重新扫描应用列表（新下载的 app 无需重启即可出现）
+        NotificationCenter.default.post(name: .appListRefreshRequested, object: nil)
     }
     
     func toggleMainWindowVisibility() {

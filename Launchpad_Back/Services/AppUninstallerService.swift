@@ -63,6 +63,11 @@ final class AppUninstallerService {
     }
 
     /// 实际执行移入废纸篓的逻辑，同步返回结果。
+    ///
+    /// 优先使用 FileManager.trashItem：
+    /// - 纯文件系统操作，不经过 Finder/LaunchServices，**不需要辅助功能/App 管理权限**
+    /// - 修复 macOS 上 NSWorkspace.recycle 反复弹"辅助功能"权限弹窗、且实际删不掉的问题
+    /// 若 trashItem 失败，回退到 NSWorkspace.recycle。
     private func performRecycle(appURL: URL) -> Result<Void, Error> {
         let fm = FileManager.default
 
@@ -79,9 +84,16 @@ final class AppUninstallerService {
             return .failure(AppUninstallerError.notAnAppBundle(appURL))
         }
 
-        // 3. 调用 NSWorkspace 移入废纸篓
-        //    recycle(_:completionHandler:) 的第一个参数是 [URL: URL]，
-        //    表示「原始 URL -> 废纸篓中最终位置」的映射；error 为 nil 才算成功。
+        // 3. 优先使用 FileManager.trashItem（纯文件系统操作，不触发辅助功能/App 管理权限）
+        do {
+            try fm.trashItem(at: appURL, resultingItemURL: nil)
+            Logger.info("AppUninstallerService: trashItem moved to trash: \(appURL.path)")
+            return .success(())
+        } catch {
+            Logger.warning("AppUninstallerService: trashItem failed (\(error.localizedDescription)), falling back to NSWorkspace.recycle")
+        }
+
+        // 4. 回退：NSWorkspace.recycle
         var recycledMap: [URL: URL] = [:]
         var recycleError: Error?
 
@@ -92,16 +104,16 @@ final class AppUninstallerService {
             semaphore.signal()
         }
 
-        // recycle 的 completion handler 通常很快返回；给一个较长超时兜底，避免永久挂起
         _ = semaphore.wait(timeout: .now() + 30)
 
-        // 成功判定：无 error 且返回的映射里包含原 URL（说明已被移到废纸篓）
         if recycleError == nil, recycledMap[appURL] != nil {
-            Logger.info("AppUninstallerService: moved to trash: \(appURL.path)")
+            Logger.info("AppUninstallerService: recycle moved to trash: \(appURL.path)")
             return .success(())
         }
 
-        Logger.error("AppUninstallerService: recycle failed for \(appURL.path): \(recycleError?.localizedDescription ?? "unknown")")
+        // 5. 精确区分错误原因
+        let detail = recycleError?.localizedDescription ?? "unknown"
+        Logger.error("AppUninstallerService: recycle failed for \(appURL.path): \(detail)")
         return .failure(AppUninstallerError.recycleFailed(appURL, underlying: recycleError))
     }
 }
