@@ -541,6 +541,20 @@ final class LaunchpadViewModel: ObservableObject {
         hiddenApps.contains(app.stableIdentifier)
     }
 
+    /// 通过 stableIdentifier 从隐藏列表移除（用于"显示"按钮，不依赖 allApps 数据完整性）
+    /// - Parameter identifier: 应用的 stableIdentifier
+    func removeHiddenApp(byIdentifier identifier: String) {
+        if hiddenApps.contains(identifier) {
+            hiddenApps.removeAll { $0 == identifier }
+            Logger.info("Removed hidden app by identifier: \(identifier)")
+            // 触发数据变更通知，刷新所有 VM 实例
+            notifyOtherInstances()
+            // 同步本地数据
+            apps = allApps.filter { !isAppHidden($0) }
+            reconcileDisplayItems()
+        }
+    }
+
     /// 供設定頁顯示的隱藏應用條目（含反查到的名字與路徑）。
     /// 反查優先序：allApps -> 僅以 stableIdentifier 為名。
     var hiddenAppEntries: [HiddenAppEntry] {

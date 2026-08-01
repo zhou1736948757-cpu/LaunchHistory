@@ -225,10 +225,21 @@ struct GeneralSettingsView: View {
         } else {
             ForEach(entries) { entry in
                 HStack(spacing: 10) {
-                    // 应用图标（path 为 nil 时用占位符）
-                    CachedAppIconImage(path: entry.path ?? "", appName: entry.name) {
-                        IconLoadingPlaceholder(cornerRadius: 6)
-                    }
+                    // 应用图标：path 为 nil 时（app 被卸载）用 name 作为 fallback
+                    CachedAppIconImage(
+                        path: entry.path ?? "",
+                        appName: entry.name,
+                        placeholder: {
+                            // 文件夹图标当 placeholder
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(.white.opacity(0.1))
+                                Image(systemName: "app.fill")
+                                    .foregroundStyle(.white.opacity(0.6))
+                                    .font(.system(size: 14))
+                            }
+                        }
+                    )
                     .frame(width: 28, height: 28)
                     .clipShape(RoundedRectangle(cornerRadius: 6))
 
@@ -284,13 +295,9 @@ struct GeneralSettingsView: View {
     }
 
     /// 恢复被隐藏的应用。
-    /// 通过 stableIdentifier 在 allApps 中反查 AppItem 后调用 toggleAppVisibility。
+    /// 直接操作 hiddenApps 数组（不依赖 allApps，因为设置页的 VM 实例可能没加载完整数据）。
     private func showHiddenApp(_ entry: HiddenAppEntry) {
-        guard let app = launchpadVM.allApps.first(where: { $0.stableIdentifier == entry.id }) else {
-            Logger.warning("Cannot restore hidden app: no matching AppItem for \(entry.id)")
-            return
-        }
-        launchpadVM.toggleAppVisibility(app)
+        launchpadVM.removeHiddenApp(byIdentifier: entry.id)
     }
 
     /// 退出并重新打开应用（语言切换后需要新实例才能生效）。

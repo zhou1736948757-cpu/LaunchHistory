@@ -133,21 +133,20 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// 用户可在设置-手势页手动重新触发授权。
     private func requestAccessibilityPermissionIfNeeded() {
         let trusted = AXIsProcessTrusted()
-        Logger.info("Accessibility trusted: \(trusted)")
-        if trusted { return }
+        Logger.info("⦿ Accessibility trusted: \(trusted), didPrompt=\(UserDefaults.standard.bool(forKey: "didPromptAccessibility"))")
 
         // 已授权或之前已提示过且拒绝，就不再弹
-        let key = "didPromptAccessibility"
-        let didPrompt = UserDefaults.standard.bool(forKey: key)
-        if didPrompt {
-            Logger.info("Accessibility prompt already shown before, skip auto-prompt")
+        let didPrompt = UserDefaults.standard.bool(forKey: "didPromptAccessibility")
+        if trusted || didPrompt {
+            Logger.info("Accessibility already trusted or prompt shown, skip")
             return
         }
 
         // 首次：弹系统权限请求对话框
+        Logger.info("Showing Accessibility permission prompt for the first time")
         let options: NSDictionary = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
         AXIsProcessTrustedWithOptions(options)
-        UserDefaults.standard.set(true, forKey: key)
+        UserDefaults.standard.set(true, forKey: "didPromptAccessibility")
     }
 
     /// 重建手势识别器（设置面板切换手势开关时调用）
