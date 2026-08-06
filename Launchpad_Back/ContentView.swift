@@ -368,7 +368,7 @@ struct LaunchpadView: View {
             // 三指拖动进行中禁用分页拖动，避免拖图标时整个页面跟着移动
             .gesture(
                 (viewLayoutMode == .horizontalPaging && !editModeManager.isEditing && !threeFingerDragActive) ?
-                DragGesture(minimumDistance: 20)
+                DragGesture(minimumDistance: 8)
                     .onChanged { dragAmount = $0.translation }
                     .onEnded(handleDragEnd) : nil
             )

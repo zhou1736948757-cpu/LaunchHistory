@@ -220,7 +220,9 @@ class AppScannerService {
             }
             
             // 優化：只提取必要的資訊，立即釋放 plist
-            let appName = infoPlist["CFBundleDisplayName"] as? String ??
+            // 優先讀取本地化顯示名（.lproj/InfoPlist.strings），否則回退到 plist 頂層
+            let appName = localizedDisplayName(from: fullPath) ??
+                infoPlist["CFBundleDisplayName"] as? String ??
                 infoPlist["CFBundleName"] as? String ??
                 fileName.replacingOccurrences(of: ".app", with: "")
             
@@ -236,6 +238,23 @@ class AppScannerService {
         }
     }
     
+    /// 讀取應用程式的本地化顯示名（.lproj/InfoPlist.strings 中的 CFBundleDisplayName）。
+    /// 依使用者系統語言（Locale.preferredLanguages）匹配語言目錄，找不到則回傳 nil。
+    private func localizedDisplayName(from fullPath: String) -> String? {
+        guard let bundle = Bundle(path: fullPath) else { return nil }
+        let matched = Bundle.preferredLocalizations(
+            from: bundle.localizations,
+            forPreferences: Locale.preferredLanguages
+        )
+        guard let loc = matched.first,
+              let stringsPath = bundle.path(forResource: "InfoPlist", ofType: "strings", inDirectory: nil, forLocalization: loc),
+              let dict = NSDictionary(contentsOfFile: stringsPath),
+              let name = dict["CFBundleDisplayName"] as? String, !name.isEmpty else {
+            return nil
+        }
+        return name
+    }
+
     /// 移除重複的應用程式
     /// - Parameter apps: 應用程式陣列
     /// - Returns: 去重後的應用程式陣列
